@@ -1,0 +1,24 @@
+# Conda environment for the Chicago City Council project.
+# Mirrors ../divvy/environment.yml (same geospatial stack).
+# Create:   conda env create -f environment.yml
+# Update:   conda env update -f environment.yml --prune
+# Use:      conda activate chicago-council   (or select the "Chicago Council" Jupyter kernel)
+name: chicago-council
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pandas
+  - numpy
+  - matplotlib
+  - jupyter
+  - nbconvert
+  - ipykernel
+  # geospatial stack (GDAL/GEOS/PROJ come in as dependencies)
+  - geopandas
+  - contextily
+  - shapely
+  - pyproj
+  - pyogrio
+  - mapclassify
+  - nbstripout
