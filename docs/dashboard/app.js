@@ -22,28 +22,65 @@
 
   const CONTAINER_ID = 'council-app';
 
-  // Ward shapes offered, in toggle order, and the one shown first.
-  //   real = 2023 boundaries; tiles_grid = hand-specified grid; tiles_pushed = pushed-apart tiles
-  const SHAPE_OPTIONS = [
-    { key: 'tiles_grid', label: 'Grid tiles', file: 'wards_tiles_grid.geojson' },
-    { key: 'tiles_pushed', label: 'Pushed tiles', file: 'wards_tiles_pushed.geojson' },
-    { key: 'real', label: 'Real map', file: 'wards_real.geojson' },
-  ];
-  const DEFAULT_SHAPES = 'tiles_grid';
+  // Page title and version (user, 2026-10-05). The version line opens the footer text.
+  const PAGE_TITLE = 'Chicago City Council 2023–2027 term';
+  const DASHBOARD_VERSION = '0.1';
 
-  const VIEW_OPTIONS = [
+  // Map never taller than this share of the window height (vh). Was 78; raised to 82 when the
+  // subtitle line (about 32 px, ~4vh on a 784 px window) was removed (user, 2026-10-05: "slightly
+  // more than 78%"), so the page is about as tall as before.
+  const MAP_MAX_HEIGHT_VH = 82;
+
+  // Clicking a ward on the map scrolls the side table (only the table, not the page) so the
+  // highlighted row is visible. false = the table stays where it is (the first draft).
+  const SCROLL_TABLE_TO_SELECTED_WARD = true;
+
+  // Ward shapes offered, in toggle order, and the one shown first (user, 2026-10-05: real map
+  // first and default; pushed tiles dropped from the dashboard).
+  //   real = 2023 boundaries; tiles_grid = hand-specified grid
+  const SHAPE_OPTIONS = [
+    { key: 'real', label: 'Map View', file: 'wards_real.geojson' },
+    { key: 'tiles_grid', label: 'Tile View', file: 'wards_tiles_grid.geojson' },
+  ];
+  const DEFAULT_SHAPES = 'real';
+
+  // Tabs, in button order (user, 2026-10-05: tenure and absence moved into a dropdown under Alders).
+  const TAB_OPTIONS = [
     { key: 'alders', label: 'Alders' },
-    { key: 'tenure', label: 'Tenure' },
-    { key: 'absence', label: 'Absence' },
     { key: 'votes', label: 'Split votes' },
   ];
-  const DEFAULT_VIEW = 'alders';
+  const DEFAULT_TAB = 'alders';
+  // Dropdown under the Alders tab: what the map colors and labels show.
+  const ALDER_MEASURE_OPTIONS = [
+    { key: 'names', label: 'Names' },
+    { key: 'tenure', label: 'Tenure' },
+    { key: 'absence', label: 'Absence' },
+  ];
+  const DEFAULT_ALDER_MEASURE = 'names';
 
-  // Labels: on tiles, ward number + last name (+ the view's value). On the real map the wards are
-  // too small for names, so ward number only (names are in the hover card and the table).
-  const REAL_MAP_LABEL = 'number';
-  // Real-map ward number size, in map units (the map is drawn 1020 units wide, then scaled to fit).
-  const REAL_MAP_LABEL_FONT_SIZE = 22;
+  // Labels on tiles: ward number + last name (+ the view's value), font fitted to the tile.
+  // Labels on the real map (Map View):
+  //   'notebook_layout' = ward_views' labels (user, 2026-10-05): positions, nudges and font sizes from
+  //                       scripts/ward_maps.py, converted by scripts/export_dashboard_data.py
+  //                       (wards_real.geojson `labels`, meta.json real_map_labels)
+  //   'number'          = ward number only, REAL_MAP_NUMBER_FONT_SIZE (the first draft)
+  const REAL_MAP_LABEL = 'notebook_layout';
+  const REAL_MAP_NUMBER_FONT_SIZE = 22;   // map units (the map is drawn 1020 units wide, then scaled to fit)
+  // Which exported label layout each view uses (export REAL_MAP_LABEL_LAYOUTS; votes = §4.7 = §1's labels).
+  const REAL_MAP_LAYOUT_BY_VIEW = { names: 'names', votes: 'names', tenure: 'tenure', absence: 'absence' };
+  // Multiplies every real-map label size. 1 = the notebook's proportions; the export's no-overlap
+  // check only holds at 1. Labels scale with the map, so a narrow screen makes them small.
+  // OPEN QUESTION (user, 2026-10-05: "leave as is for now", likely to return, especially for a
+  // mobile-friendly version): at ~500 px map width names are ~6 px. Options: (a) scale above 1
+  // here (labels then may overlap); (b) let the map grow (MAP_MAX_HEIGHT_VH, or more page width).
+  // User, 2026-10-05: 1.25 ("all fonts could be a bit bigger"); collisions this creates are fixed by
+  // DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD in scripts/export_dashboard_data.py.
+  const REAL_MAP_LABEL_SCALE = 1.25;
+  // matplotlib's line spacing for multi-line text ("ward\nLast name"): 1.2 x font size.
+  const NOTEBOOK_LINE_SPACING = 1.2;
+  // Degrees of this page's Mercator per EPSG:3857 meter (Earth radius 6,378,137 m), to convert
+  // meta.real_map_labels.meters_per_point.
+  const DEGREES_PER_WEB_MERCATOR_METER = 180 / (Math.PI * 6378137);
 
   // Tenure colors: ward_views §2 (user, 2026-10-04): reversed viridis, yellow = newest,
   // dark purple = longest; scale from the lowest value to 22 years (anyone above gets the top color).
@@ -85,21 +122,23 @@
   padding: 16px; line-height: 1.4;
 }
 #council-app *, #council-app *::before, #council-app *::after { box-sizing: border-box; }
-#council-app h1 { font-size: 22px; margin: 0 0 2px; color: var(--cc-accent); }
-#council-app .cc-sub { color: var(--cc-ink-2); font-size: 13px; margin-bottom: 14px; }
+#council-app h1 { font-size: 22px; margin: 0 0 12px; color: var(--cc-accent); }
 #council-app .cc-controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; margin-bottom: 12px; }
 #council-app .cc-seg { display: inline-flex; border: 1px solid var(--cc-line); border-radius: 8px; overflow: hidden; background: var(--cc-surface); }
 #council-app .cc-seg button { border: 0; background: none; padding: 7px 12px; font: inherit; font-size: 14px; cursor: pointer; color: var(--cc-ink); }
 #council-app .cc-seg button + button { border-left: 1px solid var(--cc-line); }
 #council-app .cc-seg button[aria-pressed="true"] { background: var(--cc-accent); color: #fff; }
+#council-app .cc-select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--cc-line); border-radius: 8px; background: var(--cc-surface); color: var(--cc-ink); }
 #council-app .cc-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 860px) { #council-app .cc-layout { grid-template-columns: 1fr; } }
 #council-app .cc-card { background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 10px; padding: 12px; }
-/* Map never taller than the window (MAP_MAX_HEIGHT); narrower maps center. */
-#council-app .cc-map svg { width: 100%; height: auto; max-height: 78vh; display: block; margin: 0 auto; }
+/* Map never taller than MAP_MAX_HEIGHT_VH of the window; narrower maps center. */
+#council-app .cc-map svg { width: 100%; height: auto; max-height: ${MAP_MAX_HEIGHT_VH}vh; display: block; margin: 0 auto; }
 #council-app .cc-ward { stroke: #333; stroke-width: 0.8; vector-effect: non-scaling-stroke; cursor: pointer; }
 #council-app .cc-ward:hover, #council-app .cc-ward.cc-selected { stroke: #000; stroke-width: 2.5; }
 #council-app .cc-label { pointer-events: none; text-anchor: middle; dominant-baseline: central; font-weight: 600; }
+/* Map View labels: ward_maps.TEXT_HALO = white outline drawn under black text; normal weight (matplotlib default). */
+#council-app .cc-label-notebook { font-weight: 400; fill: #000; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
 #council-app .cc-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; margin-top: 8px; color: var(--cc-ink-2); }
 #council-app .cc-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #999; vertical-align: -2px; margin-right: 5px; }
 #council-app .cc-gradient { width: 180px; height: 12px; border-radius: 3px; border: 1px solid #999; }
@@ -122,7 +161,7 @@
 #council-app .cc-tooltip img { width: 64px; height: 64px; object-fit: cover; object-position: top; border-radius: 6px; float: left; margin-right: 8px; }
 #council-app .cc-tooltip strong { display: block; }
 #council-app .cc-foot { margin-top: 16px; font-size: 12px; color: var(--cc-ink-2); }
-#council-app .cc-foot ul { margin: 4px 0 0 18px; padding: 0; }
+#council-app .cc-foot p { margin: 4px 0 0; max-width: 80ch; }
 #council-app .cc-error { color: #a00; }
 `;
 
@@ -206,7 +245,9 @@
 
   const state = {
     shapes: DEFAULT_SHAPES,
-    view: DEFAULT_VIEW,
+    tab: DEFAULT_TAB,
+    alderMeasure: DEFAULT_ALDER_MEASURE,
+    view: DEFAULT_ALDER_MEASURE,   // what is drawn: the alder measure on the Alders tab, else the tab (setTab)
     eventId: null,
     selectedWard: null,
     sort: { column: 'ward', ascending: true },
@@ -267,7 +308,10 @@
     const projected = collection.features.map((feature) => {
       const rings = [];
       forEachRing(feature.geometry, (ring) => rings.push(ring.map(project)));
-      return { ward: feature.properties.ward, rings,
+      // labels: Map View anchors per layout, {layout: [lon, lat]} (real wards only).
+      const labels = {};
+      Object.entries(feature.properties.labels || {}).forEach(([layout, lonLat]) => { labels[layout] = project(lonLat); });
+      return { ward: feature.properties.ward, rings, labels,
                label: project([feature.properties.label_lon, feature.properties.label_lat]) };
     });
 
@@ -299,11 +343,21 @@
       if (shape.ward === state.selectedWard) path.classList.add('cc-selected');
       path.addEventListener('mousemove', (event) => showTooltip(shape.ward, event));
       path.addEventListener('mouseleave', hideTooltip);
-      path.addEventListener('click', (event) => { selectWard(shape.ward); showTooltip(shape.ward, event); });
+      path.addEventListener('click', (event) => {
+        selectWard(shape.ward);
+        showTooltip(shape.ward, event);
+        if (SCROLL_TABLE_TO_SELECTED_WARD) scrollTableToSelectedRow();
+      });
       svg.append(path);
     });
 
     // Labels.
+    if (state.shapes === 'real' && REAL_MAP_LABEL === 'notebook_layout') {
+      drawNotebookLabels(svg, projected, toScreen, scale);
+      ui.map.replaceChildren(svg);
+      drawLegend();
+      return;
+    }
     projected.forEach((shape) => {
       const [labelX, labelY] = toScreen(shape.label);
       const fill = fillFor(shape.ward);
@@ -313,7 +367,7 @@
       let fontSize;
       if (state.shapes === 'real' && REAL_MAP_LABEL === 'number') {
         lines = [String(Number(shape.ward))];
-        fontSize = REAL_MAP_LABEL_FONT_SIZE;
+        fontSize = REAL_MAP_NUMBER_FONT_SIZE;
       } else {
         // Tile size on screen: from the tile's own ring.
         const xs = shape.rings[0].map((point) => toScreen(point)[0]);
@@ -337,6 +391,50 @@
 
     ui.map.replaceChildren(svg);
     drawLegend();
+  }
+
+  // Map View labels as ward_views draws them (scripts/ward_maps.py draw_ward_labels and
+  // draw_ward_two_size_labels): black text with a white halo, normal weight, at the exported anchor.
+  //   one_block: "ward" over "Last name", the block centered on the anchor
+  //   two_sizes: "ward Last" with its bottom at the anchor, the value with its top at the anchor
+  function drawNotebookLabels(svg, projected, toScreen, scale) {
+    const labelMeta = data.meta.real_map_labels;
+    const layoutName = REAL_MAP_LAYOUT_BY_VIEW[state.view];
+    const layout = labelMeta.layouts[layoutName];
+    // Points on the notebook figure -> this SVG's units.
+    const unitsPerPoint = labelMeta.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale * REAL_MAP_LABEL_SCALE;
+    const haloWidth = labelMeta.halo_points * unitsPerPoint;
+    function addText(x, y, content, fontPoints, baseline) {
+      const text = svgEl('text', { x: x.toFixed(1), y: y.toFixed(1), class: 'cc-label cc-label-notebook',
+                                   'font-size': (fontPoints * unitsPerPoint).toFixed(2),
+                                   'stroke-width': haloWidth.toFixed(2),
+                                   style: `dominant-baseline:${baseline}` });   // inline: the .cc-label CSS would override an attribute
+      text.textContent = content;
+      svg.append(text);
+    }
+    projected.forEach((shape) => {
+      const [anchorX, anchorY] = toScreen(shape.labels[layoutName]);
+      const alder = data.alderByWard[shape.ward];
+      const wardNumber = String(Number(shape.ward));
+      if (layout.kind === 'one_block') {
+        const fontPoints = layout.font_points[0];
+        const lineStep = fontPoints * unitsPerPoint * NOTEBOOK_LINE_SPACING;
+        addText(anchorX, anchorY - lineStep / 2, wardNumber, fontPoints, 'central');
+        addText(anchorX, anchorY + lineStep / 2, alder.label_name, fontPoints, 'central');
+      } else {
+        const [nameFontPoints, valueFontPoints] = layout.font_points;
+        addText(anchorX, anchorY, `${wardNumber} ${alder.label_name}`, nameFontPoints, 'text-after-edge');
+        addText(anchorX, anchorY, notebookValueText(shape.ward), valueFontPoints, 'text-before-edge');
+      }
+    });
+  }
+
+  // Value line on Map View labels, as the notebook writes it (export LABEL_VALUE_DECIMALS).
+  function notebookValueText(ward) {
+    const alder = data.alderByWard[ward];
+    if (state.view === 'tenure') return alder.years_on_council.toFixed(TENURE_DECIMALS);
+    if (state.view === 'absence') return `${alder.percent_absent.toFixed(ABSENCE_DECIMALS)}%`;
+    return '';
   }
 
   function drawLegend() {
@@ -395,6 +493,15 @@
 
   function hideTooltip() {
     ui.tooltip.style.display = 'none';
+  }
+
+  // Moves the table's own scroll box so the selected row sits in the middle (page doesn't move).
+  function scrollTableToSelectedRow() {
+    const wrap = ui.table.querySelector('.cc-table-wrap');
+    const row = wrap && wrap.querySelector('tr.cc-selected');
+    if (!row) return;
+    const rowTop = row.getBoundingClientRect().top - wrap.getBoundingClientRect().top + wrap.scrollTop;
+    wrap.scrollTop = rowTop - (wrap.clientHeight - row.offsetHeight) / 2;
   }
 
   function selectWard(ward) {
@@ -511,11 +618,28 @@
     })));
   }
 
+  // The drawn view follows the tab, and on the Alders tab the dropdown.
+  function updateView() {
+    state.view = state.tab === 'alders' ? state.alderMeasure : state.tab;
+  }
+
+  function alderMeasureSelect() {
+    const select = el('select', { class: 'cc-select', 'aria-label': 'Alder measure' },
+      ALDER_MEASURE_OPTIONS.map((option) => {
+        const element = el('option', { value: option.key, text: option.label });
+        if (option.key === state.alderMeasure) element.selected = true;
+        return element;
+      }));
+    select.addEventListener('change', () => { state.alderMeasure = select.value; updateView(); render(); });
+    return select;
+  }
+
   function render() {
-    ui.controls.replaceChildren(
-      segmented(VIEW_OPTIONS, state.view, (key) => { state.view = key; render(); }),
+    ui.controls.replaceChildren(...[
+      segmented(TAB_OPTIONS, state.tab, (key) => { state.tab = key; updateView(); render(); }),
+      state.tab === 'alders' ? alderMeasureSelect() : null,   // dropdown only on the Alders tab
       segmented(SHAPE_OPTIONS, state.shapes, (key) => { state.shapes = key; render(); }),
-    );
+    ].filter(Boolean));
     const showVotes = state.view === 'votes';
     ui.eventPicker.style.display = showVotes ? '' : 'none';
     ui.eventDetails.style.display = showVotes ? '' : 'none';
@@ -533,21 +657,21 @@
     ui.eventDetails = el('div', { style: 'margin-bottom:12px' });
     ui.table = el('div');
     ui.tooltip = el('div', { class: 'cc-tooltip', role: 'tooltip' });
-    const rules = data.meta.rules || {};
-    const sources = data.meta.sources || {};
     container.replaceChildren(
-      el('h1', { text: 'Chicago City Council, ward by ward' }),
-      el('div', { class: 'cc-sub', text: `2023–2027 term · preliminary · data exported ${formatDate((data.meta.exported_at || '').slice(0, 10))}, tenure as of ${formatDate(data.meta.tenure_as_of)}` }),
+      el('h1', { text: PAGE_TITLE }),
       ui.controls,
       el('div', { class: 'cc-layout' }, [
         el('div', { class: 'cc-card' }, [ui.map, ui.legend]),
         el('div', { class: 'cc-card' }, [ui.eventPicker, ui.eventDetails, ui.table]),
       ]),
+      // Footer: the user's text, from meta.json (export ABOUT_TEXT), as one paragraph.
       el('div', { class: 'cc-foot' }, [
-        el('strong', { text: 'How the numbers are made' }),
-        el('ul', {}, Object.entries(rules).map(([name, text]) => el('li', { text: `${name.replace(/_/g, ' ')}: ${text}` }))),
-        el('strong', { text: 'Sources' }),
-        el('ul', {}, Object.entries(sources).map(([name, text]) => el('li', { text: `${name}: ${text}` }))),
+        el('strong', { text: data.meta.about_heading || '' }),
+        el('p', { text: [
+          `Version ${DASHBOARD_VERSION}, preliminary dashboard.`,
+          `Data exported ${formatDate((data.meta.exported_at || '').slice(0, 10))}, alder tenure as of ${formatDate(data.meta.tenure_as_of)}.`,
+          ...(data.meta.about_text || []),
+        ].join(' ') }),
       ]),
       ui.tooltip,
     );

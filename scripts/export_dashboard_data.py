@@ -7,7 +7,7 @@ re-derived here. The page itself is docs/dashboard/app.js.
 
 Files written (all small; sizes printed at the end):
   wards_real.geojson     2023 ward boundaries, simplified by WARD_SIMPLIFY_TOLERANCE_METERS
-  wards_tiles_grid.geojson, wards_tiles_pushed.geojson   one rectangle per ward
+  wards_tiles_grid.geojson   one rectangle per ward (pushed tiles are not exported: user, 2026-10-05)
   alders.json            one record per current alder: name, photo URL, tenure, absence
   split_events.json      one record per kept split event: tallies, each current alder's vote, attachments
   meta.json              when exported, and every rule/setting behind the numbers (shown on the page)
@@ -22,6 +22,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import geopandas as gpd
+import matplotlib
+matplotlib.use("Agg")   # no window; figures are only measured
+import matplotlib.pyplot as plt
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -62,6 +65,72 @@ DEFAULT_SPLIT_EVENT_RECORD_NUMBER = "SO2024-0013682"
 TALLY_COLUMNS = ["count_yea", "count_nay", "count_absent", "count_not_voting", "count_present",
                  "count_recused", "count_vacant", "count_rising_vote"]
 
+# Map View labels (user, 2026-10-05: alder names on the real map "as designed in the notebooks").
+# Which ward_views label layout each dashboard view uses; sizes and nudges live in scripts/ward_maps.py.
+#   "one_block" = ward_maps.draw_ward_labels: "ward\nLast name" centered on the anchor
+#   "two_sizes" = ward_maps.draw_ward_two_size_labels: "ward Last" just above the anchor, value just below
+# The split-votes view uses "names" (ward_views §4.7 uses §1's labels).
+# Value text mirrors the notebook: tenure "19.8" (TENURE_DECIMALS), absence "12.7%" (ABSENCE_PERCENT_DECIMALS).
+REAL_MAP_LABEL_LAYOUTS = {
+    "names": {"source": "ward_views §1.2 (also §4.7)", "kind": "one_block",
+              "font_points": [ward_maps.MAP_LABEL_FONT_SIZE],
+              "offsets": ward_maps.LABEL_OFFSET_POINTS_BY_WARD},
+    "tenure": {"source": 'ward_views §2.2, TENURE_LABEL_STYLE "two_sizes"', "kind": "two_sizes",
+               "font_points": [ward_maps.TENURE_NAME_FONT_SIZE, ward_maps.TENURE_YEARS_FONT_SIZE],
+               "offsets": ward_maps.TENURE_LABEL_OFFSETS_BY_STYLE["two_sizes"]},
+    "absence": {"source": 'ward_views §3.3, ABSENCE_LABEL_VALUE "percent"', "kind": "two_sizes",
+                "font_points": [ward_maps.ABSENCE_NAME_FONT_SIZE, ward_maps.ABSENCE_VALUE_FONT_SIZE],
+                "offsets": ward_maps.ABSENCE_LABEL_OFFSETS_BY_VALUE["percent"]},
+}
+LABEL_VALUE_DECIMALS = 1   # ward_views TENURE_DECIMALS and ABSENCE_PERCENT_DECIMALS (both 1)
+# Dashboard-only extra nudges, added to the notebook nudge of EVERY layout above (user, 2026-10-05:
+# "all three, same moves"). The notebook (scripts/ward_maps.py) is not changed. Needed because the page
+# draws labels REAL_MAP_LABEL_SCALE (1.25) times the notebook size (docs/dashboard/app.js).
+# {ward: (right, up)} in points on the FIGURE_SIZE_MAP figure, like the notebook's (1 pt = about 76 m;
+# about 0.7 px on a ~500 px wide map). Negative = left / down. Set by the user, 2026-10-05.
+DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD = {
+    "03": (0, -8),     # Dowell
+    "07": (0, -10),    # Mitchell
+    "08": (-3, 8),     # Harris
+    "14": (-15, 5),    # Gutierrez
+    "15": (5, 16),     # Lopez
+    "16": (0, -3),     # Coleman
+    "19": (-10, 0),    # O'Shea
+    "20": (15, -5),    # Taylor
+    "22": (-3, 5),     # Rodriguez
+    "24": (-3, 3),     # Scott
+    "29": (-12, 3),    # Taliaferro
+    "30": (5, 10),     # Cruz
+    "33": (0, 8),      # Rodriguez Sanchez
+    "35": (-5, 5),     # Quezada (user listed "35 west 5 more" twice; applied once)
+    "36": (-3, 0),     # Villegas
+    "39": (-3, 3),     # Nugent
+    "40": (-3, 3),     # Vasquez, Jr.
+    "43": (0, 5),      # Knudsen
+    "44": (5, 0),      # Lawson
+    "46": (5, 0),      # Clay
+    "47": (0, -3),     # Martin
+}
+# 49/50: user, 2026-10-05: "fine, no actual overlap" (left as the notebook has them).
+# White halo width around label text, in points: ward_maps.TEXT_HALO (patheffects linewidth 2.5).
+LABEL_HALO_POINTS = 2.5
+
+# Text under the dashboard (user's wording, 2026-10-05; replaces the "How the numbers are made" and
+# "Sources" lists on the page, which stay in meta.json `rules` / `sources` for reference).
+# Spelling fixed: "role" -> "roll calls", "In cased" -> "In case", "continous" -> "continuous".
+# The sentences state rule values in words, so the export stops if a rule changes (asserts in export_meta).
+ABOUT_TEXT_HEADING = "About the data"
+ABOUT_TEXT = [
+    "Data is sourced from the Chicago City Clerk eLMS API (api.chicityclerkelms.chicago.gov) from the "
+    "beginning of the 2023 term.",
+    "Tenure history prior to 2023 is sourced from DataMade chicago-council-scrapers nightly export.",
+    "Ward boundaries are from the Chicago Data Portal.",
+    "The split votes include all council roll call votes with at least one Nay vote.",
+    "An alderperson is counted as absent from a meeting if their vote was 'Absent' on more than 50% of "
+    "a meeting's roll calls.",
+    "In case of missing tenure data, an alderperson's tenure is assumed to be continuous from their start date.",
+]
+
 # ---------------------------------------------------------------------------
 
 
@@ -71,10 +140,12 @@ def round_coordinates(coordinates, decimals=COORDINATE_DECIMALS):
     return [round(coordinates[0], decimals), round(coordinates[1], decimals)]
 
 
-def write_geojson(shapes, file_name):
+def write_geojson(shapes, file_name, labels_by_ward=None):
     """shapes: GeoDataFrame with `ward` and geometry. Written as EPSG:4326 GeoJSON with properties
     ward, label_lon, label_lat. Label point = representative_point() (inside the shape; the same
-    point ward_maps.draw_ward_labels uses), taken in the shapes' own CRS, then converted."""
+    point ward_maps.draw_ward_labels uses), taken in the shapes' own CRS, then converted.
+    labels_by_ward: optional {ward: {layout: [lon, lat]}}, written as property `labels` (Map View
+    label anchors from real_map_label_layout(); the page uses these instead of label_lon/lat)."""
     shapes = shapes[["ward", "geometry"]].copy()
     label_points = gpd.GeoSeries(shapes.representative_point(), crs=shapes.crs).to_crs("EPSG:4326")
     shapes["label_lon"] = label_points.x.round(COORDINATE_DECIMALS).values
@@ -82,7 +153,79 @@ def write_geojson(shapes, file_name):
     collection = json.loads(shapes.to_crs("EPSG:4326").to_json(drop_id=True))
     for feature in collection["features"]:
         feature["geometry"]["coordinates"] = round_coordinates(feature["geometry"]["coordinates"])
+        if labels_by_ward is not None:
+            feature["properties"]["labels"] = labels_by_ward[feature["properties"]["ward"]]
     write_json(collection, file_name)
+
+
+def real_map_label_layout(alder_records):
+    """Map View label anchors and the points-to-map scale, from the notebook's own figure.
+
+    Rebuilds the ward_views map figure (plt.subplots(figsize=ward_maps.FIGURE_SIZE_MAP), unsimplified
+    ward outlines in PLOT_CRS, axis off: fill, basemap, title and color bar don't move the axis) and
+    asks matplotlib where each label lands: anchor = representative_point() (as
+    ward_maps.draw_ward_labels), plus that layout's nudge in points. Then draws the labels with the
+    ward_maps functions and prints ward_maps.label_overlaps (expected 0, as in the notebook).
+
+    Returns ({ward: {layout: [lon, lat]}}, meters_per_point). meters_per_point is in EPSG:3857 units
+    on that figure; the page multiplies font sizes in points by it.
+    """
+    wards = ward_maps.load_ward_shapes("real").sort_values("ward").reset_index(drop=True)
+    alder_by_ward = {record["ward"]: record for record in alder_records}
+    figure, axis = plt.subplots(figsize=ward_maps.FIGURE_SIZE_MAP)
+    ward_maps.draw_ward_outlines(axis, wards)
+    axis.set_axis_off()
+    figure.canvas.draw()
+
+    # Map meters per typographic point, x and y separately (equal if the axis aspect is equal).
+    data_to_pixels = axis.transData
+    origin_pixels = data_to_pixels.transform((0, 0))
+    pixels_per_meter_x = data_to_pixels.transform((1000, 0))[0] - origin_pixels[0]
+    pixels_per_meter_y = data_to_pixels.transform((0, 1000))[1] - origin_pixels[1]
+    pixels_per_point = figure.dpi / 72
+    meters_per_point = 1000 * pixels_per_point / pixels_per_meter_x
+    assert abs(pixels_per_meter_x / pixels_per_meter_y - 1) < 1e-6, "axis aspect is not equal"
+    print(f"Map View labels: figure {ward_maps.FIGURE_SIZE_MAP} in, 1 pt = {meters_per_point:.1f} m on the map")
+
+    anchor_by_ward = dict(zip(wards.ward, wards.representative_point()))
+    labels_by_ward = {ward: {} for ward in wards.ward}
+    for layout_name, layout in REAL_MAP_LABEL_LAYOUTS.items():
+        anchors = []
+        for ward, anchor in anchor_by_ward.items():
+            # Notebook nudge plus the dashboard-only extra nudge.
+            notebook_right, notebook_up = layout["offsets"].get(ward, (0, 0))
+            extra_right, extra_up = DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD.get(ward, (0, 0))
+            right_points, up_points = notebook_right + extra_right, notebook_up + extra_up
+            anchors.append((anchor.x + right_points * meters_per_point, anchor.y + up_points * meters_per_point))
+        anchors_lon_lat = gpd.GeoSeries(gpd.points_from_xy(*zip(*anchors)), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
+        for ward, point in zip(anchor_by_ward, anchors_lon_lat):
+            labels_by_ward[ward][layout_name] = [round(point.x, COORDINATE_DECIMALS), round(point.y, COORDINATE_DECIMALS)]
+    plt.close(figure)
+
+    # Overlap check with the notebook's own drawing functions and texts, at the notebook's size and
+    # nudges only (the dashboard's larger labels and extra nudges are checked in the browser).
+    number_name = {ward: f"{ward.lstrip('0')} {alder_by_ward[ward]['label_name']}" for ward in wards.ward}
+    texts_by_layout = {
+        "names": {ward: f"{ward.lstrip('0')}\n{alder_by_ward[ward]['label_name']}" for ward in wards.ward},
+        "tenure": {ward: f"{alder_by_ward[ward]['years_on_council']:.{LABEL_VALUE_DECIMALS}f}" for ward in wards.ward},
+        "absence": {ward: f"{alder_by_ward[ward]['percent_absent']:.{LABEL_VALUE_DECIMALS}f}%" for ward in wards.ward},
+    }
+    for layout_name, layout in REAL_MAP_LABEL_LAYOUTS.items():
+        figure, axis = plt.subplots(figsize=ward_maps.FIGURE_SIZE_MAP)
+        ward_maps.draw_ward_outlines(axis, wards)
+        if layout["kind"] == "one_block":
+            annotations = ward_maps.draw_ward_labels(axis, wards, texts_by_layout[layout_name],
+                                                     font_size=layout["font_points"][0], offset_points_by_ward=layout["offsets"])
+        else:
+            annotations = ward_maps.draw_ward_two_size_labels(axis, wards, number_name, texts_by_layout[layout_name],
+                                                              *layout["font_points"], offset_points_by_ward=layout["offsets"])
+        axis.set_axis_off()
+        figure.canvas.draw()
+        overlaps = ward_maps.label_overlaps(figure, annotations)
+        plt.close(figure)
+        print(f"  {layout_name} ({layout['source']}): overlapping label pairs {len(overlaps)}",
+              [f"{ward_a}/{ward_b}" for ward_a, ward_b, *_ in overlaps])
+    return labels_by_ward, meters_per_point
 
 
 def write_json(data, file_name):
@@ -91,16 +234,15 @@ def write_json(data, file_name):
     print(f"wrote {output_path.relative_to(REPO_DIR)} ({output_path.stat().st_size / 1000:,.0f} KB)")
 
 
-def export_shapes():
+def export_shapes(labels_by_ward):
     real_wards = ward_maps.load_ward_shapes("real").to_crs(SIMPLIFY_CRS)
     point_count_before = real_wards.geometry.count_coordinates().sum()
     real_wards["geometry"] = real_wards.geometry.simplify(
         WARD_SIMPLIFY_TOLERANCE_METERS * FEET_PER_METER, preserve_topology=True)
     print(f"ward points: {point_count_before:,} -> {real_wards.geometry.count_coordinates().sum():,} "
           f"(tolerance {WARD_SIMPLIFY_TOLERANCE_METERS} m)")
-    write_geojson(real_wards, "wards_real.geojson")
+    write_geojson(real_wards, "wards_real.geojson", labels_by_ward=labels_by_ward)
     write_geojson(ward_maps.load_ward_shapes("tiles_grid"), "wards_tiles_grid.geojson")
-    write_geojson(ward_maps.load_ward_shapes("tiles_pushed"), "wards_tiles_pushed.geojson")
 
 
 def export_alders_and_votes():
@@ -159,14 +301,29 @@ def export_alders_and_votes():
 
     default_event = [record for record in event_records if record["record_number"] == DEFAULT_SPLIT_EVENT_RECORD_NUMBER]
     assert len(default_event) == 1, f"{DEFAULT_SPLIT_EVENT_RECORD_NUMBER} must match exactly one kept split event"
-    return default_event[0]["event_id"], len(counted_events)
+    return default_event[0]["event_id"], len(counted_events), alder_records
 
 
-def export_meta(default_event_id, counted_event_count):
+def export_meta(default_event_id, counted_event_count, meters_per_point):
+    # ABOUT_TEXT states these rule values in words; stop if a rule no longer matches the sentence.
+    assert council_metrics.SPLIT_MIN_NAY == 1, "ABOUT_TEXT says 'at least one Nay vote'"
+    assert council_metrics.SPLIT_ACTION_BY == "City Council" and council_metrics.SPLIT_ROSTER_KINDS == ["roll call"], \
+        "ABOUT_TEXT says 'council roll call votes'"
+    assert council_metrics.ABSENT_MEETING_SHARE_THRESHOLD == 0.5, "ABOUT_TEXT says 'more than 50%'"
     write_json({
         "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "tenure_as_of": build_tables.AS_OF_DATE,
         "default_split_event_id": default_event_id,
+        # Map View labels: font sizes in points on the notebook figure; meters_per_point converts
+        # them to EPSG:3857 map units. Anchors are in wards_real.geojson `labels`.
+        "real_map_labels": {
+            "meters_per_point": meters_per_point,
+            "halo_points": LABEL_HALO_POINTS,
+            "layouts": {name: {"kind": layout["kind"], "font_points": layout["font_points"], "source": layout["source"]}
+                        for name, layout in REAL_MAP_LABEL_LAYOUTS.items()},
+        },
+        "about_heading": ABOUT_TEXT_HEADING,
+        "about_text": ABOUT_TEXT,
         "rules": {
             "current_alder": "eLMS person list: active, with a ward number (decision 1.1)",
             "tenure": "years from earliest DataMade council membership start to the as-of date, gaps ignored (decision 1.2)",
@@ -180,7 +337,6 @@ def export_meta(default_event_id, counted_event_count):
                             f"{council_metrics.SPLIT_MIN_NAY} Nay vote (decision 1.5)"),
             "ward_boundaries": f"2023 wards, simplified at {WARD_SIMPLIFY_TOLERANCE_METERS} m",
             "tiles_grid": f"hand-specified grid, layout {build_ward_tiles.GRID_LAYOUT}",
-            "tiles_pushed": "each tile starts at its ward and overlapping tiles are pushed apart",
         },
         "sources": {
             "votes, people, attachments": "Chicago City Clerk eLMS API (api.chicityclerkelms.chicago.gov)",
@@ -192,6 +348,7 @@ def export_meta(default_event_id, counted_event_count):
 
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    export_shapes()
-    default_event_id, counted_event_count = export_alders_and_votes()
-    export_meta(default_event_id, counted_event_count)
+    default_event_id, counted_event_count, alder_records = export_alders_and_votes()
+    labels_by_ward, meters_per_point = real_map_label_layout(alder_records)
+    export_shapes(labels_by_ward)
+    export_meta(default_event_id, counted_event_count, meters_per_point)
