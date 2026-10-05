@@ -14,6 +14,7 @@ dependencies:
   - jupyter
   - nbconvert
   - ipykernel
+  - ipywidgets   # ward_views §4.7 event dropdown (user, 2026-10-05); already pulled in by jupyter
   # geospatial stack (GDAL/GEOS/PROJ come in as dependencies)
   - geopandas
   - contextily

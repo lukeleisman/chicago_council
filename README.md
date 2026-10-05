@@ -64,4 +64,6 @@ a `*_source` column. Nothing is filtered — that is left to the views.
 - `notebooks/ward_views.ipynb` — ward-map views built from `data/tables/` (drawing helpers in
   `scripts/ward_maps.py`). §1: alder map (ward number + name) and photo grid; §2: tenure map
   (continuous color, capped at 22 years) and sorted bar chart; §3: absence map (% of council
-  meetings absent) and ranked table.
+  meetings absent) and ranked table; §4: split roll calls (table of the 224 council roll calls
+  with ≥1 Nay, alder-by-alder agreement matrix, and a map of each alder's vote on one event with
+  an ipywidgets dropdown, event details and attachment PDF links).
