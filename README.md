@@ -51,9 +51,35 @@ URLs and retrieval times alongside the files it writes.
 ## Tables
 
 `scripts/build_tables.py all` reads the raw downloads (no API calls) and writes CSV tables to
-`data/tables/`: `people`, `meetings`, `attendance`, `vote_events`, `member_votes`. Every rule is
+`data/tables/`: `people`, `meetings`, `attendance`, `vote_events`, `member_votes`, `attachments`. Every rule is
 a named constant at the top of the script; corrected values keep the raw value beside them with
 a `*_source` column. Nothing is filtered — that is left to the views.
+
+`scripts/build_ward_tiles.py all` writes equal-size ward tiles to `data/tables/`:
+`ward_tiles_grid.geojson` (hand-specified grid) and `ward_tiles_pushed.geojson` (tiles started at
+each ward and pushed apart). Any view switches shapes with `MAP_SHAPES` (`scripts/ward_maps.py`).
+
+Shared metrics (current alders, absence, split roll calls) live in `scripts/council_metrics.py`,
+used by both the notebooks and the dashboard export.
+
+## Dashboard (preliminary)
+
+A static page in `docs/` (served by GitHub Pages from `main` → `/docs`), in the same pattern as
+blanketbox_public: `docs/dashboard/app.js` is one self-contained script that fetches
+`docs/data/*.json` and renders into `<div id="council-app">`.
+
+```bash
+python scripts/build_tables.py all && python scripts/build_ward_tiles.py all
+python scripts/export_dashboard_data.py           # writes docs/data/ (committed)
+cd docs && python -m http.server 8765             # then open http://localhost:8765/
+```
+
+To embed on another site (e.g. a WordPress Custom HTML block):
+```html
+<div id="council-app"></div>
+<script src="https://lukeleisman.github.io/chicago_council/dashboard/app.js"></script>
+```
+The script finds `data/` relative to its own URL.
 
 ## Notebooks
 
@@ -61,6 +87,8 @@ a `*_source` column. Nothing is filtered — that is left to the views.
 - `notebooks/source_comparison.ipynb` — eLMS vs DataMade vote coverage and agreement.
 - `notebooks/tables_review.ipynb` — §1: the raw data behind each table-building decision;
   §2: each built table, how the tables link, and known results rebuilt from them.
+- `notebooks/ward_tiles.ipynb` — the grid and pushed-apart ward tiles, their options, and how
+  well each keeps real-map neighbors.
 - `notebooks/ward_views.ipynb` — ward-map views built from `data/tables/` (drawing helpers in
   `scripts/ward_maps.py`). §1: alder map (ward number + name) and photo grid; §2: tenure map
   (continuous color, capped at 22 years) and sorted bar chart; §3: absence map (% of council

@@ -28,14 +28,17 @@ from matplotlib.transforms import Bbox
 
 LAYERS_DIR = Path(__file__).resolve().parent.parent / "data" / "raw" / "layers"
 WARD_LAYER_FILE = "wards_2023.geojson"
+TABLES_DIR = Path(__file__).resolve().parent.parent / "data" / "tables"
 
 # Coordinate system for plotting. Web Mercator is what basemap tiles use
 # (same as map_layers_review).
 PLOT_CRS = "EPSG:3857"
 
-# Ward shapes: "real" = 2023 ward boundaries. "tiles" = equal-size ward tiles
-# (plan Phase 4; not built yet, so asking for it raises an error).
-MAP_SHAPES_OPTIONS = ("real", "tiles")
+# Ward shapes: "real" = 2023 ward boundaries. "tiles_grid" = equal-size ward tiles on the
+# user's hand-specified grid (plan Phase 4a). "tiles_pushed" = equal-size tiles started at each
+# real ward and pushed apart (plan 4b). Both written by scripts/build_ward_tiles.py.
+MAP_SHAPES_OPTIONS = ("real", "tiles_grid", "tiles_pushed")
+TILE_FILE_BY_MAP_SHAPES = {"tiles_grid": "ward_tiles_grid.geojson", "tiles_pushed": "ward_tiles_pushed.geojson"}
 
 # Street basemap choices. The two Esri entries are map_layers_review's
 # BASEMAP_OPTIONS (tested 2026-09-29: CARTO needs a key, OpenStreetMap blocks
@@ -64,8 +67,11 @@ def load_ward_shapes(map_shapes="real", layers_dir=LAYERS_DIR):
     """Ward shapes in PLOT_CRS, with `ward` zero-padded ("01".."50") and the original value in `ward_raw`."""
     if map_shapes not in MAP_SHAPES_OPTIONS:
         raise ValueError(f"map_shapes must be one of {MAP_SHAPES_OPTIONS}, got {map_shapes!r}")
-    if map_shapes == "tiles":
-        raise NotImplementedError("ward tiles are plan Phase 4 (scripts/build_ward_tiles.py), not built yet")
+    if map_shapes in TILE_FILE_BY_MAP_SHAPES:
+        # Tile files already store ward zero-padded; ward_raw is the unpadded number, as for real wards.
+        tiles = gpd.read_file(TABLES_DIR / TILE_FILE_BY_MAP_SHAPES[map_shapes])
+        tiles["ward_raw"] = tiles["ward"].astype(int).astype(str)
+        return tiles[["ward", "ward_raw", "geometry"]].to_crs(PLOT_CRS)
     wards = gpd.read_file(Path(layers_dir) / WARD_LAYER_FILE)
     wards["ward_raw"] = wards["ward"]
     wards["ward"] = wards["ward_raw"].astype(int).map("{:02d}".format)

@@ -16,18 +16,21 @@ Tables (reviewed in notebooks/tables_review.ipynb section 2):
   attendance    one row per meeting x attendance roll call x member
   vote_events   one row per action (any body) in the eLMS item files that has a per-member roster
   member_votes  one row per vote_event x roster row
+  attachments   one row per eLMS item file x entry in its `attachments` list (added 2026-10-05;
+                items with no attachments, 153 today, have no rows)
 
 How they link:
   member_votes.event_id -> vote_events.event_id
   member_votes.person_id, attendance.person_id -> people.person_id
   vote_events.meeting_id, attendance.meeting_id -> meetings.meeting_id
+  attachments.matter_id -> vote_events.matter_id (many events can share one matter)
 
 Not in eLMS, so not in any table: the 9 matters in KNOWN_DELETED_MATTER_IDS
 (scripts/fetch_elms.py), which exist only in DataMade.
 
 Usage:
   python scripts/build_tables.py all        # every table, in dependency order
-  python scripts/build_tables.py people     # one table (also: meetings, attendance, vote_events, member_votes)
+  python scripts/build_tables.py people     # one table (also: meetings, attendance, vote_events, member_votes, attachments)
 """
 
 import hashlib
@@ -282,6 +285,35 @@ def load_raw_actions():
     return pd.DataFrame(event_rows), pd.DataFrame(member_vote_rows)
 
 
+def build_attachments():
+    """One row per entry in each item file's `attachments` list, in eLMS's order. Nothing changed.
+
+    Columns:
+      matter_id, record_number  the item (same values as vote_events)
+      attachment_position       1-based position in eLMS's list (eLMS gives no other order or date)
+      attachment_type           eLMS attachmentType as recorded ("Legislation", "Committee Letter", ...)
+      file_name                 eLMS fileName as recorded
+      url                       eLMS path as recorded (a public PDF link)
+    """
+    rows = []
+    expected_row_count = 0
+    for matter_file in sorted((ELMS_DIR / "matters").glob("*.json")):
+        matter = json.loads(matter_file.read_text())
+        attachments = matter.get("attachments") or []
+        expected_row_count += len(attachments)
+        for position, attachment in enumerate(attachments, start=1):
+            rows.append({
+                "matter_id": matter["matterId"], "record_number": matter["recordNumber"],
+                "attachment_position": position, "attachment_type": attachment["attachmentType"],
+                "file_name": attachment["fileName"], "url": attachment["path"],
+            })
+    attachments = pd.DataFrame(rows)
+    # Checks: every raw entry has a row; one row per (item, position).
+    assert len(attachments) == expected_row_count
+    assert not attachments.duplicated(["matter_id", "attachment_position"]).any(), "(matter_id, position) must be unique"
+    return attachments
+
+
 def assign_roster_kind(row):
     """ROSTER_KIND_RULES, first match wins (mirrors tables_review §1.4d)."""
     text = (row.action_text or "").lower()
@@ -503,6 +535,7 @@ STEPS = {
     "vote_events": build_vote_events,
     "meetings": build_meetings,
     "people": build_people,
+    "attachments": build_attachments,
 }
 
 if __name__ == "__main__":
