@@ -3,11 +3,10 @@
 This repository exists to better understand the current Chicago City Council (2023–2027 term)
 through its ward map.
 
-## Status: starting
+## Status: data layer built, views next
 
-Nothing is built yet. The first step is confirming what public data exists — in particular,
-whether individual alderperson roll-call votes are available for the current term — before
-any analysis or map is written.
+Raw eLMS downloads (per-member votes for the current term) are turned into tidy tables; the
+ward-map views are next.
 
 ## Planned
 
@@ -47,4 +46,16 @@ URLs and retrieval times alongside the files it writes.
   ([datamade/chicago-council-scrapers](https://github.com/datamade/chicago-council-scrapers),
   release `nightly`, ~1 GB zipped / 3.5 GB unzipped) — used as a cross-check and for history.
 
-`notebooks/map_layers_review.ipynb` draws every map layer for visual review.
+## Tables
+
+`scripts/build_tables.py all` reads the raw downloads (no API calls) and writes CSV tables to
+`data/tables/`: `people`, `meetings`, `attendance`, `vote_events`, `member_votes`. Every rule is
+a named constant at the top of the script; corrected values keep the raw value beside them with
+a `*_source` column. Nothing is filtered — that is left to the views.
+
+## Notebooks
+
+- `notebooks/map_layers_review.ipynb` — draws every map layer for visual review.
+- `notebooks/source_comparison.ipynb` — eLMS vs DataMade vote coverage and agreement.
+- `notebooks/tables_review.ipynb` — §1: the raw data behind each table-building decision;
+  §2: each built table, how the tables link, and known results rebuilt from them.
