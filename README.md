@@ -42,6 +42,8 @@ URLs and retrieval times alongside the files it writes.
 - `scripts/fetch_layers.py` — map layers from the Chicago Data Portal (wards, community areas,
   neighborhoods, census tracts, precincts, ZIP codes, police districts, parks, CTA, schools,
   ward offices). Dataset IDs are listed in the script.
+- `scripts/fetch_photos.py` — current alders' photos from the eLMS profile-picture URLs in
+  `data/tables/people.csv` (run `build_tables.py` first), saved to `data/raw/photos/`.
 - DataMade's nightly Chicago council SQLite export
   ([datamade/chicago-council-scrapers](https://github.com/datamade/chicago-council-scrapers),
   release `nightly`, ~1 GB zipped / 3.5 GB unzipped) — used as a cross-check and for history.
@@ -59,3 +61,5 @@ a `*_source` column. Nothing is filtered — that is left to the views.
 - `notebooks/source_comparison.ipynb` — eLMS vs DataMade vote coverage and agreement.
 - `notebooks/tables_review.ipynb` — §1: the raw data behind each table-building decision;
   §2: each built table, how the tables link, and known results rebuilt from them.
+- `notebooks/ward_views.ipynb` — ward-map views built from `data/tables/` (drawing helpers in
+  `scripts/ward_maps.py`). §1: alder map (ward number + name) and photo grid.
