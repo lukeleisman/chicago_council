@@ -62,4 +62,5 @@ a `*_source` column. Nothing is filtered — that is left to the views.
 - `notebooks/tables_review.ipynb` — §1: the raw data behind each table-building decision;
   §2: each built table, how the tables link, and known results rebuilt from them.
 - `notebooks/ward_views.ipynb` — ward-map views built from `data/tables/` (drawing helpers in
-  `scripts/ward_maps.py`). §1: alder map (ward number + name) and photo grid.
+  `scripts/ward_maps.py`). §1: alder map (ward number + name) and photo grid; §2: tenure map
+  (continuous color, capped at 20 years) and sorted bar chart.

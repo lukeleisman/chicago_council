@@ -16,7 +16,11 @@ from pathlib import Path
 
 import contextily
 import geopandas as gpd
+import matplotlib
 from matplotlib import patheffects
+from matplotlib.cm import ScalarMappable
+from matplotlib.colors import Normalize
+from matplotlib.transforms import Bbox
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -72,6 +76,21 @@ def draw_ward_outlines(axis, wards, color=WARD_OUTLINE_COLOR, line_width=WARD_OU
     wards.boundary.plot(ax=axis, color=color, linewidth=line_width)
 
 
+def draw_ward_fill(axis, wards, value_column, colormap_name, value_min, value_max, opacity):
+    """Fill each ward by its value in value_column on a continuous colormap.
+
+    Colors are linear from value_min (bottom of colormap) to value_max (top); the caller picks
+    the range. Values outside the range get the end color (clip=True): above value_max -> top
+    color, below value_min -> bottom color. Returns the ScalarMappable, so the caller can draw a
+    matching color bar.
+    """
+    color_scale = Normalize(vmin=value_min, vmax=value_max, clip=True)
+    colormap = matplotlib.colormaps[colormap_name]
+    fill_colors = [colormap(color_scale(value)) for value in wards[value_column]]
+    wards.plot(ax=axis, color=fill_colors, alpha=opacity, edgecolor="none")
+    return ScalarMappable(norm=color_scale, cmap=colormap)
+
+
 def draw_ward_labels(axis, wards, label_by_ward, font_size=WARD_LABEL_FONT_SIZE, offset_points_by_ward=None):
     """Write label_by_ward[ward] at each ward's representative point (a point guaranteed inside the shape).
 
@@ -89,14 +108,39 @@ def draw_ward_labels(axis, wards, label_by_ward, font_size=WARD_LABEL_FONT_SIZE,
     return annotation_by_ward
 
 
+def draw_ward_two_size_labels(axis, wards, top_text_by_ward, bottom_text_by_ward, top_font_size, bottom_font_size,
+                              offset_points_by_ward=None):
+    """Two lines per ward in different font sizes: top_text sits just above the anchor, bottom_text
+    just below it. Anchor = representative point, moved by offset_points_by_ward like draw_ward_labels.
+
+    Returns {ward: [top_annotation, bottom_annotation]}; label_overlaps() treats the pair as one box.
+    """
+    offset_points_by_ward = offset_points_by_ward or {}
+    annotations_by_ward = {}
+    for ward, label_point in zip(wards["ward"], wards.representative_point()):
+        offset = offset_points_by_ward.get(ward, (0, 0))
+        common = dict(xy=(label_point.x, label_point.y), xytext=offset, textcoords="offset points",
+                      ha="center", path_effects=TEXT_HALO, annotation_clip=True)
+        annotations_by_ward[ward] = [
+            axis.annotate(top_text_by_ward[ward], va="bottom", fontsize=top_font_size, **common),
+            axis.annotate(bottom_text_by_ward[ward], va="top", fontsize=bottom_font_size, **common),
+        ]
+    return annotations_by_ward
+
+
 def label_overlaps(figure, annotation_by_ward):
     """Every pair of drawn labels whose text boxes overlap on the rendered figure.
 
+    annotation_by_ward values are one annotation or a list of them (a multi-part label, measured
+    as the smallest box around all its parts).
     Returns a list of (ward_a, ward_b, overlap_width_pixels, overlap_height_pixels).
     The box is the text itself, not its white halo.
     """
     renderer = figure.canvas.get_renderer()
-    box_by_ward = {ward: annotation.get_window_extent(renderer) for ward, annotation in annotation_by_ward.items()}
+    box_by_ward = {}
+    for ward, annotations in annotation_by_ward.items():
+        parts = annotations if isinstance(annotations, list) else [annotations]
+        box_by_ward[ward] = Bbox.union([part.get_window_extent(renderer) for part in parts])
     wards_in_order = sorted(box_by_ward)
     overlaps = []
     for position, ward_a in enumerate(wards_in_order):
