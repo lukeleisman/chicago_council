@@ -51,10 +51,24 @@
   //   'constant'   = labels (and layer points) keep their on-screen size as you zoom
   //   'grow'       = labels grow with the map
   //   'grow_until' = labels grow with the map up to ZOOM_LABEL_MAX_GROWTH times, then stay that size
+  //   'grow_until_px' = labels grow with the map until the largest label text is ZOOM_LABEL_MAX_PX tall on
+  //                screen, then stay that size (a phone, whose labels start smaller, gets more growth).
+  //                Labels never grow faster than the map, so zooming in can't make labels overlap.
   // Tile View is 'grow': its text is fitted inside each tile, so constant-size text never gets
   // easier to read there. OPEN QUESTION for the user.
-  const ZOOM_LABELS_BY_SHAPES = { real: 'constant', tiles_grid: 'grow' };
+  // 2026-10-05: real -> 'grow_until_px' is my trial of the user's "increase the font size a bit when
+  // zooming, then stop"; was 'constant'. Not chosen by the user yet.
+  const ZOOM_LABELS_BY_SHAPES = { real: 'grow_until_px', tiles_grid: 'grow' };
   const ZOOM_LABEL_MAX_GROWTH = 2;
+  // Font size (screen px) where 'grow_until_px' stops. My number, 2026-10-05: 16 px (page body text
+  // size; names start at ~10 px on a 1470x737 desktop window, ~7 px on a 400 px wide phone).
+  const ZOOM_LABEL_MAX_PX = 16;
+  // Wards tab layer labels (community areas, neighborhoods, zips, police; class cc-layer-label) get their
+  // own cap (user, 2026-10-05: "perhaps a cap of 14 for the layer labels"). They start smaller (6 pt vs
+  // 9 pt ward numbers, the notebook's ratio), so with one shared cap they stopped at ~10.7 px.
+  // Every other label (ward numbers, Alders/Votes labels) and layer points use ZOOM_LABEL_MAX_PX.
+  const ZOOM_LAYER_LABEL_MAX_PX = 14;
+  const LAYER_LABEL_SELECTOR = '.cc-layer-label';
   // Line widths drawn in map units (layer edges, rail lines, ward outlines on the Wards tab):
   //   'constant' = keep their on-screen width; 'grow' = thicken with the map
   // (Alders/Votes ward outlines already keep a constant screen width: CSS non-scaling-stroke.)
@@ -102,13 +116,14 @@
     { key: 'cps_schools_sy2526', label: 'CPS schools (2025–26)' },
     { key: 'ward_offices', label: 'Ward offices' },
   ];
-  const DEFAULT_LAYER = 'community_areas';
+  const DEFAULT_LAYER = 'street_map';   // user, 2026-10-05: Wards tab opens on the street map (was community_areas)
   // Wards tab, Map View: drawn like notebooks/map_layers_review.ipynb's large maps (styles in
   // meta.json `layers.style`, from scripts/map_layers.py; sizes in points, converted with
   // meta.real_map_labels.meters_per_point). No basemap (plan, 2026-10-05).
   // Multiplies layer labels and ward numbers. 1 = the notebook's proportions. User, 2026-10-05: 1.25
-  // (same as REAL_MAP_LABEL_SCALE).
-  const LAYER_MAP_LABEL_SCALE = 1.25;
+  // (same as REAL_MAP_LABEL_SCALE). 2026-10-05 later: 1.5 with positions from scripts/optimize_map_labels.py
+  // made for 1.5 (export WARDS_TAB_LABEL_POSITIONS, WARDS_TAB_OPTIMIZED_FOR_SCALE); trial, not chosen yet.
+  const LAYER_MAP_LABEL_SCALE = 1.5;
   // Multiplies point sizes (stations, schools, ward offices) on the layer map. 1 = the notebook's
   // proportions (points about 3.7 pt across, ~2.5 px on a 600 px wide map). User, 2026-10-05: 1.5.
   const LAYER_MAP_POINT_SCALE = 1.5;
@@ -175,7 +190,12 @@
   // here (labels then may overlap); (b) let the map grow (MAP_MAX_HEIGHT_VH, or more page width).
   // User, 2026-10-05: 1.25 ("all fonts could be a bit bigger"); collisions this creates are fixed by
   // DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD in scripts/export_dashboard_data.py.
-  const REAL_MAP_LABEL_SCALE = 1.25;
+  // 2026-10-05: 1.39 was my trial of the user's "+1 on everything" (names 9 -> 10 px on the user's
+  // 1470x737 window); user then asked to see 1.5 (names 10.8 px). Label positions from
+  // scripts/optimize_map_labels.py made for this scale (export DASHBOARD_LABEL_POSITIONS,
+  // DASHBOARD_OPTIMIZED_FOR_SCALE). Not chosen by the user yet.
+  // Back to today: 1.25 here and DASHBOARD_LABEL_POSITIONS = "hand" in the export.
+  const REAL_MAP_LABEL_SCALE = 1.5;
   // matplotlib's line spacing for multi-line text ("ward\nLast name"): 1.2 x font size.
   const NOTEBOOK_LINE_SPACING = 1.2;
   // Degrees of this page's Mercator per EPSG:3857 meter (Earth radius 6,378,137 m), to convert
@@ -261,6 +281,11 @@
 #council-app .cc-gradient { width: 180px; height: 12px; border-radius: 3px; border: 1px solid #999; }
 #council-app .cc-event-picker { display: flex; flex-direction: column; gap: 6px; width: 100%; }
 #council-app .cc-event-picker input, #council-app .cc-event-picker select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--cc-line); border-radius: 6px; width: 100%; background: #fff; }
+/* Dropdown arrow drawn here (user, 2026-10-05: no arrow on the WordPress page; the theme sets
+   appearance:none and our background rules clear any arrow image). Same arrow in every browser. */
+#council-app select.cc-select, #council-app .cc-event-picker select { -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23555' stroke-width='1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px; padding-right: 28px; }
 #council-app .cc-event h2 { font-size: 16px; margin: 0 0 4px; }
 #council-app .cc-event .cc-meta { font-size: 13px; color: var(--cc-ink-2); margin-bottom: 8px; }
 #council-app .cc-event .cc-title { font-size: 14px; margin-bottom: 8px; }
@@ -661,20 +686,38 @@
   }
 
   // How much labels are scaled back so their screen size follows ZOOM_LABELS_BY_SHAPES.
-  function labelCounterScale(k) {
+  // isLayerLabel: the element is a Wards tab layer label (own cap, ZOOM_LAYER_LABEL_MAX_PX).
+  function labelCounterScale(k, isLayerLabel) {
     const mode = ZOOM_LABELS_BY_SHAPES[state.shapes];
     if (mode === 'grow') return 1;
     if (mode === 'grow_until') return Math.min(k, ZOOM_LABEL_MAX_GROWTH) / k;
+    if (mode === 'grow_until_px') {
+      const capPx = isLayerLabel ? ZOOM_LAYER_LABEL_MAX_PX : ZOOM_LABEL_MAX_PX;
+      return Math.min(k, Math.max(1, capPx / largestLabelPx(isLayerLabel))) / k;
+    }
     return 1 / k;   // constant
+  }
+
+  // Largest label font on screen at zoom 1 (screen px) in one group (layer labels, or all other labels):
+  // biggest font-size among those zooming labels, times the map's SVG-unit-to-screen-px factor (the
+  // outer <svg>, not the zoom group).
+  function largestLabelPx(isLayerLabel) {
+    const sizes = [...ui.zoomLayer.querySelectorAll('text[data-anchor-x]')]
+      .filter((text) => text.matches(LAYER_LABEL_SELECTOR) === isLayerLabel)
+      .map((text) => parseFloat(text.getAttribute('font-size')));
+    const matrix = ui.mapSvg.getScreenCTM();
+    if (!sizes.length || !matrix) return isLayerLabel ? ZOOM_LAYER_LABEL_MAX_PX : ZOOM_LABEL_MAX_PX;
+    return Math.max(...sizes) * matrix.a;
   }
 
   function applyZoom() {
     const { k, x, y } = currentZoom();
     ui.zoomLayer.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${k.toFixed(4)})`);
     // Labels and layer points: scaled about their own anchor, so a label's lines stay together.
-    const labelScale = labelCounterScale(k);
+    const labelScales = { other: labelCounterScale(k, false), layer: labelCounterScale(k, true) };
     ui.zoomLayer.querySelectorAll('[data-anchor-x]').forEach((element) => {
       const anchorX = element.dataset.anchorX; const anchorY = element.dataset.anchorY;
+      const labelScale = element.matches(LAYER_LABEL_SELECTOR) ? labelScales.layer : labelScales.other;
       if (labelScale === 1) element.removeAttribute('transform');
       else element.setAttribute('transform', `translate(${anchorX},${anchorY}) scale(${labelScale.toFixed(4)}) translate(${-anchorX},${-anchorY})`);
     });
@@ -831,6 +874,9 @@
     const labelUnits = unitsPerPoint * LAYER_MAP_LABEL_SCALE;
     const haloWidth = data.meta.real_map_labels.halo_points * labelUnits;
     const layerInfo = data.meta.layers.by_layer[state.layer];
+    if (data.meta.layers.positions_for_scale !== undefined && data.meta.layers.positions_for_scale !== LAYER_MAP_LABEL_SCALE) {
+      console.warn(`Wards tab label positions were set for scale ${data.meta.layers.positions_for_scale} (${data.meta.layers.label_positions}); page draws ${LAYER_MAP_LABEL_SCALE}`);
+    }
     const collection = data.layers[state.layer];
 
     if (isStreetMap) {
@@ -930,6 +976,9 @@
   //   two_sizes: "ward Last" with its bottom at the anchor, the value with its top at the anchor
   function drawNotebookLabels(svg, projected, toScreen, scale) {
     const labelMeta = data.meta.real_map_labels;
+    if (labelMeta.positions_for_scale !== undefined && labelMeta.positions_for_scale !== REAL_MAP_LABEL_SCALE) {
+      console.warn(`Map View label positions were set for scale ${labelMeta.positions_for_scale} (${labelMeta.positions}); page draws ${REAL_MAP_LABEL_SCALE}`);
+    }
     const layoutName = REAL_MAP_LAYOUT_BY_VIEW[state.view];
     const layout = labelMeta.layouts[layoutName];
     // Points on the notebook figure -> this SVG's units.

@@ -26,7 +26,9 @@ import geopandas as gpd
 import matplotlib
 matplotlib.use("Agg")   # no window; figures are only measured
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+from shapely.geometry import Point as shapely_point
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_tables
@@ -114,6 +116,39 @@ DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD = {
     "47": (0, -3),     # Martin
 }
 # 49/50: user, 2026-10-05: "fine, no actual overlap" (left as the notebook has them).
+# Which Map View label positions the page gets:
+#   "hand"      = notebook nudge + DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD (above; set by the user for scale 1.25)
+#   "optimized" = scripts/optimize_map_labels.py's nudges for DASHBOARD_OPTIMIZED_FOR_SCALE
+#                 (scripts/map_label_offsets_optimized.json): least movement from "hand" that leaves no
+#                 label overlapping another at that size. Must match app.js REAL_MAP_LABEL_SCALE
+#                 (the page warns in the console if not).
+# 2026-10-05: "optimized" at 1.39 was my trial of the user's "+1 on everything" (names 9 -> 10 px on
+# the user's screen); user then asked to see 1.5. "hand" (with scale 1.25) brings back the old page exactly.
+DASHBOARD_LABEL_POSITIONS = "optimized"
+HAND_NUDGES_SET_FOR_SCALE = 1.25   # the scale the user set DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD at
+DASHBOARD_OPTIMIZED_FOR_SCALE = 1.5
+OPTIMIZED_OFFSETS_FILE = Path(__file__).resolve().parent / "map_label_offsets_optimized.json"
+# Wards tab Map View label positions (layer labels and bold ward numbers):
+#   "plain"     = representative point, no nudge (the notebook's map_layers_review large maps)
+#   "optimized" = scripts/optimize_map_labels.py's nudges for WARDS_TAB_OPTIMIZED_FOR_SCALE, with the
+#                 ward numbers placed by WARDS_TAB_WARD_NUMBER_OPTION ("fixed_first" or "joint"; see
+#                 WARD_NUMBER_OPTIONS in that script). Must match app.js LAYER_MAP_LABEL_SCALE.
+# User, 2026-10-05: "optimize the wards tab maps". 1.5 matches the Alders tab; "joint" leaves fewer
+# overlaps (1.5: 0/22/5/0 vs 7/28/5/0 pairs on community areas/neighborhoods/zips/police) but moves
+# ward numbers up to 30 pt from the center point. My trial picks; not chosen by the user yet.
+WARDS_TAB_LABEL_POSITIONS = "optimized"
+WARDS_TAB_OPTIMIZED_FOR_SCALE = 1.5
+WARDS_TAB_WARD_NUMBER_OPTION = "joint"
+WARDS_TAB_PLAIN_SCALE = 1.25   # LAYER_MAP_LABEL_SCALE the plain positions were last shown at
+
+
+def wards_tab_offsets():
+    """The optimizer's Wards tab nudges for the chosen scale and option, or None for "plain"."""
+    if WARDS_TAB_LABEL_POSITIONS == "plain":
+        return None
+    assert WARDS_TAB_LABEL_POSITIONS == "optimized", WARDS_TAB_LABEL_POSITIONS
+    by_scale = json.loads(OPTIMIZED_OFFSETS_FILE.read_text())["wards_tab"]
+    return by_scale[str(WARDS_TAB_OPTIMIZED_FOR_SCALE)][WARDS_TAB_WARD_NUMBER_OPTION]
 # White halo width around label text, in points: ward_maps.TEXT_HALO (patheffects linewidth 2.5).
 LABEL_HALO_POINTS = 2.5
 
@@ -209,18 +244,30 @@ def real_map_label_layout(alder_records):
 
     anchor_by_ward = dict(zip(wards.ward, wards.representative_point()))
     labels_by_ward = {ward: {} for ward in wards.ward}
-    # Wards tab: bold ward number at the plain representative point, no nudge
-    # (map_layers_review draw_wards_on_top).
-    plain_anchors = gpd.GeoSeries(list(anchor_by_ward.values()), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
+    # Wards tab: bold ward number at the representative point (map_layers_review draw_wards_on_top),
+    # plus the optimizer's nudge when WARDS_TAB_LABEL_POSITIONS = "optimized".
+    number_nudges = (wards_tab_offsets() or {}).get("ward_numbers", {})
+    number_points = [shapely_point(anchor.x + number_nudges.get(ward, (0, 0))[0] * meters_per_point,
+                                   anchor.y + number_nudges.get(ward, (0, 0))[1] * meters_per_point)
+                     for ward, anchor in anchor_by_ward.items()]
+    plain_anchors = gpd.GeoSeries(number_points, crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
     for ward, point in zip(anchor_by_ward, plain_anchors):
         labels_by_ward[ward]["ward_number"] = [round(point.x, COORDINATE_DECIMALS), round(point.y, COORDINATE_DECIMALS)]
+    if DASHBOARD_LABEL_POSITIONS == "optimized":
+        optimized = json.loads(OPTIMIZED_OFFSETS_FILE.read_text())["alders_map_view"][str(DASHBOARD_OPTIMIZED_FOR_SCALE)]
+        print(f"Map View labels: optimized nudges for scale {DASHBOARD_OPTIMIZED_FOR_SCALE} ({OPTIMIZED_OFFSETS_FILE.name})")
+    else:
+        assert DASHBOARD_LABEL_POSITIONS == "hand", DASHBOARD_LABEL_POSITIONS
     for layout_name, layout in REAL_MAP_LABEL_LAYOUTS.items():
         anchors = []
         for ward, anchor in anchor_by_ward.items():
-            # Notebook nudge plus the dashboard-only extra nudge.
-            notebook_right, notebook_up = layout["offsets"].get(ward, (0, 0))
-            extra_right, extra_up = DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD.get(ward, (0, 0))
-            right_points, up_points = notebook_right + extra_right, notebook_up + extra_up
+            if DASHBOARD_LABEL_POSITIONS == "optimized":
+                right_points, up_points = optimized[layout_name][ward]
+            else:
+                # Notebook nudge plus the dashboard-only extra nudge.
+                notebook_right, notebook_up = layout["offsets"].get(ward, (0, 0))
+                extra_right, extra_up = DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD.get(ward, (0, 0))
+                right_points, up_points = notebook_right + extra_right, notebook_up + extra_up
             anchors.append((anchor.x + right_points * meters_per_point, anchor.y + up_points * meters_per_point))
         anchors_lon_lat = gpd.GeoSeries(gpd.points_from_xy(*zip(*anchors)), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
         for ward, point in zip(anchor_by_ward, anchors_lon_lat):
@@ -276,7 +323,7 @@ def export_shapes(labels_by_ward):
     write_geojson(ward_maps.load_ward_shapes("tiles_grid"), "wards_tiles_grid.geojson")
 
 
-def export_layers():
+def export_layers(meters_per_point):
     """One GeoJSON per DASHBOARD_LAYERS entry. Properties: label (LAYER_STYLE label column, or null),
     label_lon/label_lat (representative point, unsimplified, PLOT_CRS), color_index ("fill" layers:
     map_layers.neighbor_color_indexes, unsimplified, PLOT_CRS), hover_name (LAYER_HOVER_NAME_COLUMN).
@@ -299,7 +346,14 @@ def export_layers():
                 print(f"WARNING {layer_name}: needed {colors_used} colors, palette has "
                       f"{len(map_layers.FILL_PALETTE)}; colors repeat")
         if style["label_column"]:
-            label_points = gpd.GeoSeries(frame_plot.representative_point(), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
+            label_points = frame_plot.representative_point()
+            nudges = wards_tab_offsets()
+            if nudges is not None:
+                # Optimizer nudges, points -> PLOT_CRS meters, one per feature in this file's order.
+                layer_nudges = np.array(nudges["layers"][layer_name], dtype=float) * meters_per_point
+                assert len(layer_nudges) == len(frame_plot), f"{layer_name}: nudge count differs from features"
+                label_points = gpd.points_from_xy(label_points.x + layer_nudges[:, 0], label_points.y + layer_nudges[:, 1])
+            label_points = gpd.GeoSeries(label_points, crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
             properties["label_lon"] = label_points.x.round(COORDINATE_DECIMALS).values
             properties["label_lat"] = label_points.y.round(COORDINATE_DECIMALS).values
 
@@ -395,6 +449,8 @@ def export_meta(default_event_id, counted_event_count, meters_per_point, layer_m
         "real_map_labels": {
             "meters_per_point": meters_per_point,
             "halo_points": LABEL_HALO_POINTS,
+            "positions": DASHBOARD_LABEL_POSITIONS,
+            "positions_for_scale": DASHBOARD_OPTIMIZED_FOR_SCALE if DASHBOARD_LABEL_POSITIONS == "optimized" else HAND_NUDGES_SET_FOR_SCALE,
             "layouts": {name: {"kind": layout["kind"], "font_points": layout["font_points"], "source": layout["source"]}
                         for name, layout in REAL_MAP_LABEL_LAYOUTS.items()},
         },
@@ -402,6 +458,10 @@ def export_meta(default_event_id, counted_event_count, meters_per_point, layer_m
         # figure (the same size as FIGURE_SIZE_MAP, so meters_per_point above converts them too).
         "layers": {
             "order": DASHBOARD_LAYERS,
+            # Wards tab label positions and the LAYER_MAP_LABEL_SCALE they were made for (page warns if different).
+            "label_positions": WARDS_TAB_LABEL_POSITIONS,
+            "ward_number_option": WARDS_TAB_WARD_NUMBER_OPTION if WARDS_TAB_LABEL_POSITIONS == "optimized" else None,
+            "positions_for_scale": WARDS_TAB_OPTIMIZED_FOR_SCALE if WARDS_TAB_LABEL_POSITIONS == "optimized" else WARDS_TAB_PLAIN_SCALE,
             "by_layer": layer_meta,
             "style": {
                 "fill_palette": map_layers.FILL_PALETTE, "fill_opacity": map_layers.FILL_OPACITY,
@@ -448,5 +508,5 @@ if __name__ == "__main__":
     export_shapes(labels_by_ward)
     # The layer sizes in points reuse meters_per_point, measured on FIGURE_SIZE_MAP.
     assert tuple(map_layers.FIGURE_SIZE_LARGE) == tuple(ward_maps.FIGURE_SIZE_MAP), "layer figure size differs"
-    layer_meta = export_layers()
+    layer_meta = export_layers(meters_per_point)
     export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta)
