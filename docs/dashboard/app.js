@@ -75,12 +75,38 @@
   // Wards tab, Map View: drawn like notebooks/map_layers_review.ipynb's large maps (styles in
   // meta.json `layers.style`, from scripts/map_layers.py; sizes in points, converted with
   // meta.real_map_labels.meters_per_point). No basemap (plan, 2026-10-05).
-  // OPEN QUESTION (for the user): should these labels also get REAL_MAP_LABEL_SCALE (1.25)?
-  // 1 = the notebook's proportions.
-  const LAYER_MAP_LABEL_SCALE = 1;
-  // Multiplies line widths and point sizes on the layer map. 1 = the notebook's proportions
-  // (points are about 3.7 pt across, so only ~2.5 px on a 600 px wide map).
-  const LAYER_MAP_MARK_SCALE = 1;
+  // Multiplies layer labels and ward numbers. 1 = the notebook's proportions. User, 2026-10-05: 1.25
+  // (same as REAL_MAP_LABEL_SCALE).
+  const LAYER_MAP_LABEL_SCALE = 1.25;
+  // Multiplies point sizes (stations, schools, ward offices) on the layer map. 1 = the notebook's
+  // proportions (points about 3.7 pt across, ~2.5 px on a 600 px wide map). User, 2026-10-05: 1.5.
+  const LAYER_MAP_POINT_SCALE = 1.5;
+  // Multiplies line widths (layer edges, rail lines, ward outlines). 1 = the notebook's proportions.
+  const LAYER_MAP_LINE_SCALE = 1;
+  // What each ward holds, per layer: docs/data/ward_layer_summary.json, made by
+  // scripts/ward_layer_overlaps.py (rules there: WARD_SUMMARY_RULES). Each layer is "list" (names on
+  // the tile) or "count" (number on the tile; names in the hover card and the table).
+  // Tile View, Wards tab: at most this many names on a tile; the rest become "+N more".
+  const TILE_MAX_LIST_LINES = 4;
+  // Largest tile text, in map units (same cap as the other tile labels).
+  const TILE_MAX_FONT_SIZE = 18;
+  // Tile View, Wards tab: how the font is sized.
+  //   'per_tile' = each tile's text fitted to that tile (the other tabs' method; sizes differ)
+  //   'uniform'  = one size for every tile: the smallest of the per-tile fits
+  const WARDS_TILE_FONT_FIT = 'uniform';
+  // Word after a count, per layer (singular, plural).
+  const LAYER_COUNT_NOUN = {
+    parks: ['park', 'parks'],
+    cta_rail_lines: ['station', 'stations'],   // rail lines show the station count for now (user, 2026-10-05)
+    cta_rail_stations: ['station', 'stations'],
+    cps_schools_sy2526: ['school', 'schools'],
+  };
+  // Text put before a name when shown (names themselves are as in the raw data, e.g. community
+  // areas in capitals).
+  const LAYER_NAME_PREFIX = { police_districts: 'District ' };
+  // Tile View: names in these layers are broken onto separate lines at each ", " (ward offices:
+  // "121 North LaSalle Street" / "Room 300"; else the longest address sets a tiny font on every tile).
+  const TILE_SPLIT_NAMES_AT_COMMA = ['ward_offices'];
 
   // Labels on tiles: ward number + last name (+ the view's value), font fitted to the tile.
   // Labels on the real map (Map View):
@@ -152,6 +178,8 @@
 #council-app .cc-seg button { border: 0; background: none; padding: 7px 12px; font: inherit; font-size: 14px; cursor: pointer; color: var(--cc-ink); }
 #council-app .cc-seg button + button { border-left: 1px solid var(--cc-line); }
 #council-app .cc-seg button[aria-pressed="true"] { background: var(--cc-accent); color: #fff; }
+/* width/display: host themes (e.g. WordPress Jadro) stretch selects to 100% width. */
+#council-app select.cc-select { width: auto; display: inline-block; }
 #council-app .cc-select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--cc-line); border-radius: 8px; background: var(--cc-surface); color: var(--cc-ink); }
 #council-app .cc-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 860px) { #council-app .cc-layout { grid-template-columns: 1fr; } }
@@ -191,6 +219,7 @@
   border-radius: 8px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 8px; font-size: 13px; display: none; max-width: 260px; }
 #council-app .cc-tooltip img { width: 64px; height: 64px; object-fit: cover; object-position: top; border-radius: 6px; float: left; margin-right: 8px; }
 #council-app .cc-tooltip strong { display: block; }
+#council-app .cc-tooltip-list { clear: both; margin-top: 6px; }
 #council-app .cc-foot { margin-top: 16px; font-size: 12px; color: var(--cc-ink-2); }
 #council-app .cc-foot p { margin: 4px 0 0; max-width: 80ch; }
 #council-app .cc-error { color: #a00; }
@@ -284,7 +313,8 @@
     selectedWard: null,
     sort: { column: 'ward', ascending: true },
   };
-  const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {} };
+  const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {},
+                 wardLayerSummary: {} };
   const ui = {};
 
   /* ── Values per view ──────────────────────────────────────────────────── */
@@ -331,6 +361,28 @@
     if (state.view === 'absence') return `${alder.percent_absent.toFixed(ABSENCE_DECIMALS)}%`;
     if (state.view === 'votes') return voteOf(ward) === NOT_ON_ROSTER_LABEL ? '—' : voteOf(ward);
     return '';
+  }
+
+  /* ── Wards tab: what each ward holds (ward_layer_summary.json) ─────────── */
+
+  function layerEntry(ward) {
+    const layerSummary = data.wardLayerSummary[state.layer];
+    return { tile: layerSummary.tile, ...layerSummary.by_ward[ward] };
+  }
+
+  function displayName(name) {
+    return (LAYER_NAME_PREFIX[state.layer] || '') + name;
+  }
+
+  function countText(count) {
+    const [singular, plural] = LAYER_COUNT_NOUN[state.layer] || ['item', 'items'];
+    return `${count} ${count === 1 ? singular : plural}`;
+  }
+
+  // Names with the share of the ward each covers, where the rule has one ("NORTH CENTER 45%").
+  function namesWithShares(entry) {
+    return entry.names.map((name, index) => displayName(name)
+      + (entry.shares ? ` ${Math.round(entry.shares[index] * 100)}%` : ''));
   }
 
   /* ── Map ──────────────────────────────────────────────────────────────── */
@@ -397,6 +449,7 @@
       drawLegend();
       return;
     }
+    const tileLabels = [];   // Wards tab: drawn after sizing (WARDS_TILE_FONT_FIT)
     projected.forEach((shape) => {
       const [labelX, labelY] = toScreen(shape.label);
       const fill = fillFor(shape.ward);
@@ -413,16 +466,46 @@
         const ys = shape.rings[0].map((point) => toScreen(point)[1]);
         const tileWidth = Math.max(...xs) - Math.min(...xs);
         const tileHeight = Math.max(...ys) - Math.min(...ys);
-        lines = [`${Number(shape.ward)} ${alder.label_name}`];
-        if (valueText(shape.ward)) lines.push(valueText(shape.ward));
+        if (state.view === 'wards') {
+          // Ward number, then the layer's names (at most TILE_MAX_LIST_LINES) or its count.
+          const entry = layerEntry(shape.ward);
+          lines = [String(Number(shape.ward))];
+          if (entry.tile === 'count') {
+            lines.push(countText(entry.names.length));
+          } else {
+            const shown = entry.names.slice(0, TILE_MAX_LIST_LINES).map(displayName);
+            const hidden = entry.names.length - shown.length;
+            const listLines = hidden > 0 ? [...shown.slice(0, -1), `+${hidden + 1} more`] : shown;
+            lines.push(...(TILE_SPLIT_NAMES_AT_COMMA.includes(state.layer)
+              ? listLines.flatMap((line) => line.split(', ')) : listLines));
+          }
+        } else {
+          lines = [`${Number(shape.ward)} ${alder.label_name}`];
+          if (valueText(shape.ward)) lines.push(valueText(shape.ward));
+        }
         // Font fits the tile: width (about 0.58 em per character) and height (lines x 1.2 em).
         const longest = Math.max(...lines.map((line) => line.length));
-        fontSize = Math.min(tileWidth / (0.58 * longest), tileHeight / (lines.length * 1.35), 18);
+        fontSize = Math.min(tileWidth / (0.58 * longest), tileHeight / (lines.length * 1.35), TILE_MAX_FONT_SIZE);
       }
+      if (state.view === 'wards') { tileLabels.push({ labelX, labelY, ink, lines, fontSize }); return; }
       lines.forEach((line, index) => {
         const offset = (index - (lines.length - 1) / 2) * fontSize * 1.15;
         const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
                                      'font-size': fontSize.toFixed(1), fill: ink });
+        text.textContent = line;
+        svg.append(text);
+      });
+    });
+
+    const uniformSize = Math.min(...tileLabels.map((label) => label.fontSize));
+    tileLabels.forEach(({ labelX, labelY, ink, lines, fontSize }) => {
+      const size = WARDS_TILE_FONT_FIT === 'uniform' ? uniformSize : fontSize;
+      lines.forEach((line, index) => {
+        const offset = (index - (lines.length - 1) / 2) * size * 1.15;
+        // First line = ward number, bold; the rest normal weight.
+        const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
+                                     'font-size': size.toFixed(1), fill: ink,
+                                     style: index === 0 ? 'font-weight:700' : 'font-weight:400' });
         text.textContent = line;
         svg.append(text);
       });
@@ -452,7 +535,8 @@
   function drawLayerMap(svg, projected, toScreen, scale) {
     const style = data.meta.layers.style;
     const unitsPerPoint = data.meta.real_map_labels.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale;
-    const markUnits = unitsPerPoint * LAYER_MAP_MARK_SCALE;
+    const markUnits = unitsPerPoint * LAYER_MAP_LINE_SCALE;
+    const pointUnits = unitsPerPoint * LAYER_MAP_POINT_SCALE;
     const labelUnits = unitsPerPoint * LAYER_MAP_LABEL_SCALE;
     const haloWidth = data.meta.real_map_labels.halo_points * labelUnits;
     const layerInfo = data.meta.layers.by_layer[state.layer];
@@ -496,10 +580,10 @@
         } else if (layerInfo.kind === 'point') {
           const [pointX, pointY] = toScreen(project(feature.geometry.coordinates));
           // markersize is the marker's area in points^2, so its diameter is the square root.
-          const radius = (Math.sqrt(style.point_area_points2) / 2) * markUnits;
+          const radius = (Math.sqrt(style.point_area_points2) / 2) * pointUnits;
           const circle = svgEl('circle', { cx: pointX.toFixed(1), cy: pointY.toFixed(1), r: radius.toFixed(2),
             class: 'cc-layer-point', fill: style.point_color, stroke: style.point_edge_color,
-            'stroke-width': (style.point_edge_points * markUnits).toFixed(2) });
+            'stroke-width': (style.point_edge_points * pointUnits).toFixed(2) });
           circle.addEventListener('mousemove', (event) => showLayerTooltip(properties, event));
           circle.addEventListener('mouseleave', hideTooltip);
           svg.append(circle);
@@ -603,7 +687,12 @@
       const layerInfo = data.meta.layers.by_layer[state.layer];
       const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
       const colorNote = layerInfo.kind === 'fill' ? `, colored so neighbors differ (${layerInfo.colors_used} colors)` : '';
-      items.push(el('span', { text: `${layerLabel}: ${layerInfo.feature_count} features${colorNote}. Black lines and bold numbers = wards.` }));
+      const rule = data.wardLayerSummary[state.layer];
+      const tileNote = rule.tile === 'count' ? 'Tiles show the count; hover or see the table for names.'
+        : `Tiles show up to ${TILE_MAX_LIST_LINES} names; hover or see the table for all.`;
+      items.push(el('span', { text: state.shapes === 'real'
+        ? `${layerLabel}: ${layerInfo.feature_count} features${colorNote}. Black lines and bold numbers = wards.`
+        : `${layerLabel}. ${tileNote}` }));
     } else {
       items.push(el('span', { text: 'Hover or tap a ward for its alder.' }));
     }
@@ -621,6 +710,13 @@
     ];
     if (state.view === 'votes' && currentEvent()) {
       lines.push(el('div', { text: `Vote on ${currentEvent().record_number}: ${voteOf(ward)}` }));
+    }
+    if (state.view === 'wards' && data.wardLayerSummary[state.layer]) {
+      const entry = layerEntry(ward);
+      const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
+      const heading = entry.tile === 'count' ? `${layerLabel}: ${countText(entry.names.length)}` : `${layerLabel}:`;
+      lines.push(el('div', { class: 'cc-tooltip-list' }, [el('strong', { text: heading }),
+        document.createTextNode(namesWithShares(entry).join(', ') || 'none')]));
     }
     const children = [];
     if (alder.photo_url) children.push(el('img', { src: alder.photo_url, alt: '' }));
@@ -723,6 +819,12 @@
     ];
     if (state.view === 'votes') {
       columns.push({ key: 'vote', label: 'Vote', value: (alder) => voteOf(alder.ward) });
+    } else if (state.view === 'wards') {
+      // Count, then every name (with the share of the ward, where the rule has one).
+      columns.push(
+        { key: 'count', label: 'Count', value: (alder) => layerEntry(alder.ward).names.length, num: true },
+        { key: 'names', label: LAYER_OPTIONS.find((option) => option.key === state.layer).label,
+          value: (alder) => namesWithShares(layerEntry(alder.ward)).join(', ') });
     } else {
       columns.push(
         { key: 'years', label: 'Years', value: (alder) => alder.years_on_council, num: true,
@@ -870,6 +972,7 @@
       fetchJson('alders.json').then((alders) => { data.alders = alders; }),
       fetchJson('split_events.json').then((events) => { data.events = events; }),
       fetchJson('meta.json').then((meta) => { data.meta = meta; }),
+      fetchJson('ward_layer_summary.json').then((summary) => { data.wardLayerSummary = summary; }),
     ]).then(() => {
       data.alders.forEach((alder) => { data.alderByWard[alder.ward] = alder; });
       data.events.forEach((event) => { data.eventById[event.event_id] = event; });
