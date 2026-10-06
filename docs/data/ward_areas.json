@@ -1,0 +1,206 @@
+{
+"unit": "square miles (area_sq_mi) and square meters (area_m2)",
+"method": "Unsimplified 2023 ward boundary polygons, area in EPSG:3435 (IL State Plane East, feet), converted; includes any water inside a ward's boundary.",
+"by_ward": {
+"01": {
+"area_m2": 6121703,
+"area_sq_mi": 2.364
+},
+"02": {
+"area_m2": 2906482,
+"area_sq_mi": 1.122
+},
+"03": {
+"area_m2": 9083447,
+"area_sq_mi": 3.507
+},
+"04": {
+"area_m2": 10759021,
+"area_sq_mi": 4.154
+},
+"05": {
+"area_m2": 10412596,
+"area_sq_mi": 4.02
+},
+"06": {
+"area_m2": 12932309,
+"area_sq_mi": 4.993
+},
+"07": {
+"area_m2": 13145075,
+"area_sq_mi": 5.075
+},
+"08": {
+"area_m2": 16721864,
+"area_sq_mi": 6.456
+},
+"09": {
+"area_m2": 21784784,
+"area_sq_mi": 8.411
+},
+"10": {
+"area_m2": 53636591,
+"area_sq_mi": 20.709
+},
+"11": {
+"area_m2": 11831055,
+"area_sq_mi": 4.568
+},
+"12": {
+"area_m2": 12398989,
+"area_sq_mi": 4.787
+},
+"13": {
+"area_m2": 13749660,
+"area_sq_mi": 5.309
+},
+"14": {
+"area_m2": 11270148,
+"area_sq_mi": 4.351
+},
+"15": {
+"area_m2": 7718256,
+"area_sq_mi": 2.98
+},
+"16": {
+"area_m2": 11692068,
+"area_sq_mi": 4.514
+},
+"17": {
+"area_m2": 12093223,
+"area_sq_mi": 4.669
+},
+"18": {
+"area_m2": 17965485,
+"area_sq_mi": 6.937
+},
+"19": {
+"area_m2": 20437733,
+"area_sq_mi": 7.891
+},
+"20": {
+"area_m2": 13503445,
+"area_sq_mi": 5.214
+},
+"21": {
+"area_m2": 19683993,
+"area_sq_mi": 7.6
+},
+"22": {
+"area_m2": 9802167,
+"area_sq_mi": 3.785
+},
+"23": {
+"area_m2": 10853909,
+"area_sq_mi": 4.191
+},
+"24": {
+"area_m2": 10405139,
+"area_sq_mi": 4.017
+},
+"25": {
+"area_m2": 8667649,
+"area_sq_mi": 3.347
+},
+"26": {
+"area_m2": 7216672,
+"area_sq_mi": 2.786
+},
+"27": {
+"area_m2": 14825003,
+"area_sq_mi": 5.724
+},
+"28": {
+"area_m2": 14868565,
+"area_sq_mi": 5.741
+},
+"29": {
+"area_m2": 11089460,
+"area_sq_mi": 4.282
+},
+"30": {
+"area_m2": 8816922,
+"area_sq_mi": 3.404
+},
+"31": {
+"area_m2": 6914409,
+"area_sq_mi": 2.67
+},
+"32": {
+"area_m2": 8629604,
+"area_sq_mi": 3.332
+},
+"33": {
+"area_m2": 5776081,
+"area_sq_mi": 2.23
+},
+"34": {
+"area_m2": 3969618,
+"area_sq_mi": 1.533
+},
+"35": {
+"area_m2": 7072836,
+"area_sq_mi": 2.731
+},
+"36": {
+"area_m2": 7788847,
+"area_sq_mi": 3.007
+},
+"37": {
+"area_m2": 9335222,
+"area_sq_mi": 3.604
+},
+"38": {
+"area_m2": 16496417,
+"area_sq_mi": 6.369
+},
+"39": {
+"area_m2": 16896013,
+"area_sq_mi": 6.524
+},
+"40": {
+"area_m2": 8978599,
+"area_sq_mi": 3.467
+},
+"41": {
+"area_m2": 44175090,
+"area_sq_mi": 17.056
+},
+"42": {
+"area_m2": 4880618,
+"area_sq_mi": 1.884
+},
+"43": {
+"area_m2": 5782013,
+"area_sq_mi": 2.232
+},
+"44": {
+"area_m2": 4413623,
+"area_sq_mi": 1.704
+},
+"45": {
+"area_m2": 12953902,
+"area_sq_mi": 5.002
+},
+"46": {
+"area_m2": 5195813,
+"area_sq_mi": 2.006
+},
+"47": {
+"area_m2": 7879134,
+"area_sq_mi": 3.042
+},
+"48": {
+"area_m2": 4181464,
+"area_sq_mi": 1.614
+},
+"49": {
+"area_m2": 4727244,
+"area_sq_mi": 1.825
+},
+"50": {
+"area_m2": 6921722,
+"area_sq_mi": 2.672
+}
+}
+}

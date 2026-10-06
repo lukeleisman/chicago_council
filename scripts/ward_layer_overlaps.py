@@ -23,6 +23,10 @@ Output (data/tables/, gitignored like the other tables):
 Output (docs/data/, committed, read by docs/dashboard/app.js):
   ward_layer_summary.json   {layer: {"tile": "list"|"count", "source_layer", "rule",
                              "by_ward": {ward: {"names": [...], "shares": [...] or null}}}}
+  ward_areas.json           {"unit", "method", "by_ward": {ward: {"area_m2", "area_sq_mi"}}}: each ward's
+                            area, measured exactly as ward_area_m2 above (Wards tab "Street map" tiles,
+                            user 2026-10-05: "perhaps ward area"). Area of the boundary polygon as
+                            published, so any water inside a ward's boundary counts.
 
 Usage:
   python scripts/ward_layer_overlaps.py
@@ -47,6 +51,7 @@ import ward_maps
 REPO_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_PATH = REPO_DIR / "data" / "tables" / "ward_layer_overlaps.csv"
 SUMMARY_PATH = REPO_DIR / "docs" / "data" / "ward_layer_summary.json"
+WARD_AREAS_PATH = REPO_DIR / "docs" / "data" / "ward_areas.json"
 
 # Layers measured: the dashboard's Wards tab layers (export DASHBOARD_LAYERS).
 LAYERS = export_dashboard_data.DASHBOARD_LAYERS
@@ -54,6 +59,7 @@ LAYERS = export_dashboard_data.DASHBOARD_LAYERS
 # Measured in IL State Plane East (feet), the same CRS the export simplifies in.
 MEASURE_CRS = export_dashboard_data.SIMPLIFY_CRS
 SQUARE_METERS_PER_SQUARE_FOOT = 0.3048 ** 2
+SQUARE_METERS_PER_SQUARE_MILE = 1609.344 ** 2
 METERS_PER_FOOT = 0.3048
 
 # Name written for each feature. Polygon layers with a label use their LAYER_STYLE label column
@@ -199,6 +205,25 @@ def summarize(overlaps):
     print(f"wrote {SUMMARY_PATH.relative_to(REPO_DIR)} ({SUMMARY_PATH.stat().st_size / 1000:,.0f} KB)")
 
 
+def write_ward_areas(wards):
+    """docs/data/ward_areas.json: each ward's area, the same measurement as ward_area_m2 in the table
+    (unsimplified shape, MEASURE_CRS square feet -> square meters), plus square miles."""
+    by_ward = {}
+    for ward, shape in zip(wards.ward, wards.geometry):
+        area_m2 = shape.area * SQUARE_METERS_PER_SQUARE_FOOT
+        by_ward[ward] = {"area_m2": round(area_m2), "area_sq_mi": round(area_m2 / SQUARE_METERS_PER_SQUARE_MILE, 3)}
+    areas = pd.Series({ward: entry["area_sq_mi"] for ward, entry in by_ward.items()})
+    print(f"ward areas (sq mi): min {areas.min()} (ward {areas.idxmin()}), median {areas.median():.2f}, "
+          f"max {areas.max()} (ward {areas.idxmax()}), total {areas.sum():.1f}")
+    WARD_AREAS_PATH.write_text(json.dumps({
+        "unit": "square miles (area_sq_mi) and square meters (area_m2)",
+        "method": f"Unsimplified 2023 ward boundary polygons, area in {MEASURE_CRS} (IL State Plane East, feet), "
+                  "converted; includes any water inside a ward's boundary.",
+        "by_ward": dict(sorted(by_ward.items())),
+    }, indent=0))
+    print(f"wrote {WARD_AREAS_PATH.relative_to(REPO_DIR)}")
+
+
 if __name__ == "__main__":
     wards = ward_maps.load_ward_shapes("real").to_crs(MEASURE_CRS)
     tables = [overlaps_for_layer(layer_name, wards) for layer_name in LAYERS]
@@ -207,3 +232,4 @@ if __name__ == "__main__":
     overlaps.to_csv(OUTPUT_PATH, index=False)
     print(f"wrote {OUTPUT_PATH.relative_to(REPO_DIR)}: {len(overlaps):,} rows")
     summarize(overlaps)
+    write_ward_areas(wards)

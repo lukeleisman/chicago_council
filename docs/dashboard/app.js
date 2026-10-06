@@ -168,6 +168,10 @@
   // fits (user, 2026-10-05: ward office addresses "bigger with line wrapping ... very close to the
   // edges"). Widths are measured with the page's own font. Replaced the earlier split at ", ".
   const TILE_WRAP_LAYERS = ['ward_offices'];
+  // Street map, Tile View / hover card / table: each ward's area (user, 2026-10-05: the street map tile
+  // view "should show something. Perhaps ward area?"). docs/data/ward_areas.json, made by
+  // scripts/ward_layer_overlaps.py (same measurement as its ward_area_m2). Square miles, this many decimals.
+  const WARD_AREA_DECIMALS = 1;
   // Space kept free inside the tile edge for wrapped text, as a share of the tile's width / height.
   const TILE_WRAP_EDGE_MARGIN = 0.03;
   // Line step for tile text, in font sizes (the drawing loop's spacing).
@@ -401,7 +405,7 @@
     zoomByShapes: Object.fromEntries(SHAPE_OPTIONS.map((option) => [option.key, { k: 1, x: 0, y: 0 }])),
   };
   const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {},
-                 wardLayerSummary: {} };
+                 wardLayerSummary: {}, wardAreas: {} };
   const ui = {};
 
   /* ── Values per view ──────────────────────────────────────────────────── */
@@ -455,6 +459,10 @@
   function layerEntry(ward) {
     const layerSummary = data.wardLayerSummary[state.layer];
     return { tile: layerSummary.tile, ...layerSummary.by_ward[ward] };
+  }
+
+  function wardAreaText(ward) {
+    return `${data.wardAreas[ward].area_sq_mi.toFixed(WARD_AREA_DECIMALS)} sq mi`;
   }
 
   function displayName(name) {
@@ -584,7 +592,7 @@
         const tileWidth = Math.max(...xs) - Math.min(...xs);
         const tileHeight = Math.max(...ys) - Math.min(...ys);
         if (state.view === 'wards' && !data.wardLayerSummary[state.layer]) {
-          lines = [`${Number(shape.ward)} ${alder.label_name}`];   // Street map: nothing per ward to list
+          lines = [String(Number(shape.ward)), wardAreaText(shape.ward)];   // Street map: ward area
         } else if (state.view === 'wards') {
           // Ward number, then the layer's names (at most TILE_MAX_LIST_LINES) or its count.
           const entry = layerEntry(shape.ward);
@@ -1042,7 +1050,8 @@
       });
     } else if (state.view === 'wards' && state.layer === 'street_map') {
       items.push(el('span', { text: state.shapes === 'real'
-        ? 'Wards colored so neighbors differ, over a street map.' : 'Street map: Map View only.' }));
+        ? 'Wards colored so neighbors differ, over a street map.'
+        : 'Tiles show each ward\'s area in square miles (2023 boundaries). The street map is in Map View.' }));
       if (state.shapes === 'real') items.push(el('span', { style: 'font-size:11px', text: STREET_MAP_ATTRIBUTION }));
     } else if (state.view === 'wards') {
       const layerInfo = data.meta.layers.by_layer[state.layer];
@@ -1071,6 +1080,9 @@
     ];
     if (state.view === 'votes' && currentEvent()) {
       lines.push(el('div', { text: `Vote on ${currentEvent().record_number}: ${voteOf(ward)}` }));
+    }
+    if (state.view === 'wards' && state.layer === 'street_map') {
+      lines.push(el('div', { text: `Area: ${wardAreaText(ward)}` }));
     }
     if (state.view === 'wards' && data.wardLayerSummary[state.layer]) {
       const entry = layerEntry(ward);
@@ -1180,6 +1192,9 @@
     ];
     if (state.view === 'votes') {
       columns.push({ key: 'vote', label: 'Vote', value: (alder) => voteOf(alder.ward) });
+    } else if (state.view === 'wards' && state.layer === 'street_map') {
+      columns.push({ key: 'area', label: 'Area (sq mi)', value: (alder) => data.wardAreas[alder.ward].area_sq_mi, num: true,
+                     format: (value) => value.toFixed(WARD_AREA_DECIMALS) });
     } else if (state.view === 'wards' && data.wardLayerSummary[state.layer]) {
       // Count, then every name (with the share of the ward, where the rule has one).
       columns.push(
@@ -1335,6 +1350,7 @@
       fetchJson('split_events.json').then((events) => { data.events = events; }),
       fetchJson('meta.json').then((meta) => { data.meta = meta; }),
       fetchJson('ward_layer_summary.json').then((summary) => { data.wardLayerSummary = summary; }),
+      fetchJson('ward_areas.json').then((areas) => { data.wardAreas = areas.by_ward; }),
     ]).then(() => {
       data.alders.forEach((alder) => { data.alderByWard[alder.ward] = alder; });
       data.events.forEach((event) => { data.eventById[event.event_id] = event; });
