@@ -11,6 +11,7 @@ Files written (all small; sizes printed at the end):
   alders.json            one record per current alder: name, photo URL, tenure, absence
   split_events.json      one record per kept split event: tallies, each current alder's vote, attachments
   meta.json              when exported, and every rule/setting behind the numbers (shown on the page)
+  layer_<name>.geojson   Wards tab overlays (DASHBOARD_LAYERS), styled by scripts/map_layers.py
 
 Usage:
   python scripts/export_dashboard_data.py
@@ -31,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import build_tables
 import build_ward_tiles
 import council_metrics
+import map_layers
 import ward_maps
 
 # ---------------------------------------------------------------------------
@@ -115,6 +117,24 @@ DASHBOARD_EXTRA_OFFSET_POINTS_BY_WARD = {
 # White halo width around label text, in points: ward_maps.TEXT_HALO (patheffects linewidth 2.5).
 LABEL_HALO_POINTS = 2.5
 
+# Wards tab overlays (user, 2026-10-05): which layers from scripts/fetch_layers.py, in the order of
+# map_layers.LAYER_STYLE. No precincts, no census tracts (user). Each is drawn as the notebook's
+# large map (notebooks/map_layers_review.ipynb "One large map per layer"), styles from map_layers.py.
+DASHBOARD_LAYERS = ["community_areas", "neighborhoods", "zip_codes", "police_districts", "parks",
+                    "cta_rail_lines", "cta_rail_stations", "cps_schools_sy2526", "ward_offices"]
+# Name shown when hovering a point (stations, schools, ward offices; the plan's choice, 2026-10-05).
+# Layers not listed have no hover name. Column = the raw layer's column, copied as is.
+LAYER_HOVER_NAME_COLUMN = {
+    "cta_rail_stations": "longname",
+    "cps_schools_sy2526": "short_name",
+    "ward_offices": "address",
+}
+# Polygons and lines are simplified like the wards (WARD_SIMPLIFY_TOLERANCE_METERS, in SIMPLIFY_CRS).
+# Fill colors (color_index) and label points are computed on the UNSIMPLIFIED shapes in PLOT_CRS,
+# exactly as the notebook does (map_layers.neighbor_color_indexes on the EPSG:3857 frame, so the
+# neighbor distance is in Mercator meters, ~1.34x ground at Chicago; representative_point() in 3857).
+LAYER_SIMPLIFY_TOLERANCE_METERS = WARD_SIMPLIFY_TOLERANCE_METERS
+
 # Text under the dashboard (user's wording, 2026-10-05; replaces the "How the numbers are made" and
 # "Sources" lists on the page, which stay in meta.json `rules` / `sources` for reference).
 # Spelling fixed: "role" -> "roll calls", "In cased" -> "In case", "continous" -> "continuous".
@@ -189,6 +209,11 @@ def real_map_label_layout(alder_records):
 
     anchor_by_ward = dict(zip(wards.ward, wards.representative_point()))
     labels_by_ward = {ward: {} for ward in wards.ward}
+    # Wards tab: bold ward number at the plain representative point, no nudge
+    # (map_layers_review draw_wards_on_top).
+    plain_anchors = gpd.GeoSeries(list(anchor_by_ward.values()), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
+    for ward, point in zip(anchor_by_ward, plain_anchors):
+        labels_by_ward[ward]["ward_number"] = [round(point.x, COORDINATE_DECIMALS), round(point.y, COORDINATE_DECIMALS)]
     for layout_name, layout in REAL_MAP_LABEL_LAYOUTS.items():
         anchors = []
         for ward, anchor in anchor_by_ward.items():
@@ -243,6 +268,51 @@ def export_shapes(labels_by_ward):
           f"(tolerance {WARD_SIMPLIFY_TOLERANCE_METERS} m)")
     write_geojson(real_wards, "wards_real.geojson", labels_by_ward=labels_by_ward)
     write_geojson(ward_maps.load_ward_shapes("tiles_grid"), "wards_tiles_grid.geojson")
+
+
+def export_layers():
+    """One GeoJSON per DASHBOARD_LAYERS entry. Properties: label (LAYER_STYLE label column, or null),
+    label_lon/label_lat (representative point, unsimplified, PLOT_CRS), color_index ("fill" layers:
+    map_layers.neighbor_color_indexes, unsimplified, PLOT_CRS), hover_name (LAYER_HOVER_NAME_COLUMN).
+    Returns {layer: {"kind", "has_labels", "feature_count", "colors_used"}} for meta.json."""
+    layer_meta = {}
+    for layer_name in DASHBOARD_LAYERS:
+        style = map_layers.LAYER_STYLE[layer_name]
+        raw_path = ward_maps.LAYERS_DIR / f"{layer_name}.geojson"
+        frame_plot = gpd.read_file(raw_path).to_crs(ward_maps.PLOT_CRS).reset_index(drop=True)
+        properties = pd.DataFrame(index=frame_plot.index)
+        properties["label"] = frame_plot[style["label_column"]].astype(str) if style["label_column"] else None
+        hover_column = LAYER_HOVER_NAME_COLUMN.get(layer_name)
+        properties["hover_name"] = frame_plot[hover_column] if hover_column else None
+        colors_used = None
+        if style["kind"] == "fill":
+            properties["color_index"] = map_layers.neighbor_color_indexes(frame_plot)
+            colors_used = int(properties.color_index.max()) + 1
+            # Same check and message as the notebook's draw_layer.
+            if colors_used > len(map_layers.FILL_PALETTE):
+                print(f"WARNING {layer_name}: needed {colors_used} colors, palette has "
+                      f"{len(map_layers.FILL_PALETTE)}; colors repeat")
+        if style["label_column"]:
+            label_points = gpd.GeoSeries(frame_plot.representative_point(), crs=ward_maps.PLOT_CRS).to_crs("EPSG:4326")
+            properties["label_lon"] = label_points.x.round(COORDINATE_DECIMALS).values
+            properties["label_lat"] = label_points.y.round(COORDINATE_DECIMALS).values
+
+        geometry = frame_plot.geometry.to_crs(SIMPLIFY_CRS)
+        point_count_before = int(geometry.count_coordinates().sum())
+        if style["kind"] != "point":
+            geometry = geometry.simplify(LAYER_SIMPLIFY_TOLERANCE_METERS * FEET_PER_METER, preserve_topology=True)
+        point_count_after = int(geometry.count_coordinates().sum())
+        export_frame = gpd.GeoDataFrame(properties, geometry=geometry.values, crs=SIMPLIFY_CRS).to_crs("EPSG:4326")
+        collection = json.loads(export_frame.to_json(drop_id=True))
+        for feature in collection["features"]:
+            feature["geometry"]["coordinates"] = round_coordinates(feature["geometry"]["coordinates"])
+        print(f"{layer_name}: {len(frame_plot)} features ({style['kind']}), points {point_count_before:,} -> "
+              f"{point_count_after:,}" + (f", {colors_used} fill colors" if colors_used else "")
+              + f"; raw file {raw_path.stat().st_size / 1e6:.2f} MB")
+        write_json(collection, f"layer_{layer_name}.geojson")
+        layer_meta[layer_name] = {"kind": style["kind"], "has_labels": bool(style["label_column"]),
+                                  "feature_count": len(frame_plot), "colors_used": colors_used}
+    return layer_meta
 
 
 def export_alders_and_votes():
@@ -304,7 +374,7 @@ def export_alders_and_votes():
     return default_event[0]["event_id"], len(counted_events), alder_records
 
 
-def export_meta(default_event_id, counted_event_count, meters_per_point):
+def export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta):
     # ABOUT_TEXT states these rule values in words; stop if a rule no longer matches the sentence.
     assert council_metrics.SPLIT_MIN_NAY == 1, "ABOUT_TEXT says 'at least one Nay vote'"
     assert council_metrics.SPLIT_ACTION_BY == "City Council" and council_metrics.SPLIT_ROSTER_KINDS == ["roll call"], \
@@ -321,6 +391,25 @@ def export_meta(default_event_id, counted_event_count, meters_per_point):
             "halo_points": LABEL_HALO_POINTS,
             "layouts": {name: {"kind": layout["kind"], "font_points": layout["font_points"], "source": layout["source"]}
                         for name, layout in REAL_MAP_LABEL_LAYOUTS.items()},
+        },
+        # Wards tab overlays: map_layers.py styles, sizes in points on the notebook's FIGURE_SIZE_LARGE
+        # figure (the same size as FIGURE_SIZE_MAP, so meters_per_point above converts them too).
+        "layers": {
+            "order": DASHBOARD_LAYERS,
+            "by_layer": layer_meta,
+            "style": {
+                "fill_palette": map_layers.FILL_PALETTE, "fill_opacity": map_layers.FILL_OPACITY,
+                "fill_edge_color": "#777777", "fill_edge_points": 0.4,          # notebook draw_layer, "fill"
+                "single_fill_color": map_layers.SINGLE_FILL_COLOR, "single_opacity": 0.6,
+                "single_edge_points": 0.4,                                       # notebook draw_layer, "single"
+                "line_color": map_layers.LINE_COLOR, "line_points": 2,           # notebook draw_layer, "line"
+                "point_color": map_layers.POINT_COLOR,
+                "point_area_points2": map_layers.POINT_SIZE,                     # matplotlib markersize = area in pt^2
+                "point_edge_color": "white", "point_edge_points": 0.5,
+                "label_font_points": map_layers.LAYER_LABEL_FONT_SIZE, "label_color": map_layers.LAYER_LABEL_COLOR,
+                "ward_number_font_points": map_layers.WARD_NUMBER_FONT_SIZE,
+                "ward_outline_points": map_layers.WARD_OUTLINE_WIDTH_LARGE_MAP,
+            },
         },
         "about_heading": ABOUT_TEXT_HEADING,
         "about_text": ABOUT_TEXT,
@@ -351,4 +440,7 @@ if __name__ == "__main__":
     default_event_id, counted_event_count, alder_records = export_alders_and_votes()
     labels_by_ward, meters_per_point = real_map_label_layout(alder_records)
     export_shapes(labels_by_ward)
-    export_meta(default_event_id, counted_event_count, meters_per_point)
+    # The layer sizes in points reuse meters_per_point, measured on FIGURE_SIZE_MAP.
+    assert tuple(map_layers.FIGURE_SIZE_LARGE) == tuple(ward_maps.FIGURE_SIZE_MAP), "layer figure size differs"
+    layer_meta = export_layers()
+    export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta)

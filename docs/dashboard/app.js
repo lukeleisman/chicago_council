@@ -48,6 +48,7 @@
   const TAB_OPTIONS = [
     { key: 'alders', label: 'Alders' },
     { key: 'votes', label: 'Split votes' },
+    { key: 'wards', label: 'Wards' },
   ];
   const DEFAULT_TAB = 'alders';
   // Dropdown under the Alders tab: what the map colors and labels show.
@@ -57,6 +58,29 @@
     { key: 'absence', label: 'Absence' },
   ];
   const DEFAULT_ALDER_MEASURE = 'names';
+  // Dropdown under the Wards tab: which map layer is drawn under the wards (user, 2026-10-05; no
+  // precincts, no census tracts). Keys = export DASHBOARD_LAYERS; each file is fetched on first pick.
+  const LAYER_OPTIONS = [
+    { key: 'community_areas', label: 'Community areas' },
+    { key: 'neighborhoods', label: 'Neighborhoods' },
+    { key: 'zip_codes', label: 'ZIP codes' },
+    { key: 'police_districts', label: 'Police districts' },
+    { key: 'parks', label: 'Parks' },
+    { key: 'cta_rail_lines', label: 'CTA rail lines' },
+    { key: 'cta_rail_stations', label: 'CTA rail stations' },
+    { key: 'cps_schools_sy2526', label: 'CPS schools (2025–26)' },
+    { key: 'ward_offices', label: 'Ward offices' },
+  ];
+  const DEFAULT_LAYER = 'community_areas';
+  // Wards tab, Map View: drawn like notebooks/map_layers_review.ipynb's large maps (styles in
+  // meta.json `layers.style`, from scripts/map_layers.py; sizes in points, converted with
+  // meta.real_map_labels.meters_per_point). No basemap (plan, 2026-10-05).
+  // OPEN QUESTION (for the user): should these labels also get REAL_MAP_LABEL_SCALE (1.25)?
+  // 1 = the notebook's proportions.
+  const LAYER_MAP_LABEL_SCALE = 1;
+  // Multiplies line widths and point sizes on the layer map. 1 = the notebook's proportions
+  // (points are about 3.7 pt across, so only ~2.5 px on a 600 px wide map).
+  const LAYER_MAP_MARK_SCALE = 1;
 
   // Labels on tiles: ward number + last name (+ the view's value), font fitted to the tile.
   // Labels on the real map (Map View):
@@ -139,6 +163,13 @@
 #council-app .cc-label { pointer-events: none; text-anchor: middle; dominant-baseline: central; font-weight: 600; }
 /* Map View labels: ward_maps.TEXT_HALO = white outline drawn under black text; normal weight (matplotlib default). */
 #council-app .cc-label-notebook { font-weight: 400; fill: #000; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
+/* Wards tab layer map: wards are a transparent hit area under the layer; outlines drawn on top. */
+#council-app .cc-ward-hit { fill: transparent; stroke: none; cursor: pointer; }
+#council-app .cc-ward-hit.cc-selected { fill: rgba(255, 214, 0, 0.25); }
+#council-app .cc-layer-shape, #council-app .cc-ward-outline, #council-app .cc-layer-label { pointer-events: none; }
+#council-app .cc-layer-point { cursor: default; }
+#council-app .cc-layer-label { text-anchor: middle; dominant-baseline: central; font-style: italic; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
+#council-app .cc-ward-number { pointer-events: none; text-anchor: middle; dominant-baseline: central; font-weight: 700; fill: #000; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
 #council-app .cc-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; margin-top: 8px; color: var(--cc-ink-2); }
 #council-app .cc-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #999; vertical-align: -2px; margin-right: 5px; }
 #council-app .cc-gradient { width: 180px; height: 12px; border-radius: 3px; border: 1px solid #999; }
@@ -247,12 +278,13 @@
     shapes: DEFAULT_SHAPES,
     tab: DEFAULT_TAB,
     alderMeasure: DEFAULT_ALDER_MEASURE,
+    layer: DEFAULT_LAYER,
     view: DEFAULT_ALDER_MEASURE,   // what is drawn: the alder measure on the Alders tab, else the tab (setTab)
     eventId: null,
     selectedWard: null,
     sort: { column: 'ward', ascending: true },
   };
-  const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {} };
+  const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {} };
   const ui = {};
 
   /* ── Values per view ──────────────────────────────────────────────────── */
@@ -336,6 +368,13 @@
     definitions.append(hatch);
     svg.append(definitions);
 
+    if (state.view === 'wards' && state.shapes === 'real') {
+      drawLayerMap(svg, projected, toScreen, scale);
+      ui.map.replaceChildren(svg);
+      drawLegend();
+      return;
+    }
+
     projected.forEach((shape) => {
       const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
       const path = svgEl('path', { d: pathText, fill: fillFor(shape.ward), class: 'cc-ward', 'fill-rule': 'evenodd',
@@ -391,6 +430,107 @@
 
     ui.map.replaceChildren(svg);
     drawLegend();
+  }
+
+  function pathData(geometry, toScreen) {
+    const rings = [];
+    forEachRing(geometry, (ring) => rings.push(ring));
+    return rings.map((ring) => 'M' + ring.map(project).map(toScreen)
+      .map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
+  }
+
+  function lineData(geometry, toScreen) {
+    const lines = geometry.type === 'LineString' ? [geometry.coordinates] : geometry.coordinates;
+    return lines.map((line) => 'M' + line.map(project).map(toScreen)
+      .map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L')).join('');
+  }
+
+  // Wards tab, Map View: map_layers_review's large map, in its drawing order: layer (fill colors by
+  // color_index / parks one green / rail lines / points), italic layer labels with a white halo,
+  // then black ward outlines and bold ward numbers on top. Wards stay clickable through a
+  // transparent hit area drawn first; points sit above it so they can be hovered.
+  function drawLayerMap(svg, projected, toScreen, scale) {
+    const style = data.meta.layers.style;
+    const unitsPerPoint = data.meta.real_map_labels.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale;
+    const markUnits = unitsPerPoint * LAYER_MAP_MARK_SCALE;
+    const labelUnits = unitsPerPoint * LAYER_MAP_LABEL_SCALE;
+    const haloWidth = data.meta.real_map_labels.halo_points * labelUnits;
+    const layerInfo = data.meta.layers.by_layer[state.layer];
+    const collection = data.layers[state.layer];
+
+    // 1. Ward hit areas (transparent).
+    projected.forEach((shape) => {
+      const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
+      const path = svgEl('path', { d: pathText, class: 'cc-ward-hit', 'fill-rule': 'evenodd', 'data-ward': shape.ward });
+      if (shape.ward === state.selectedWard) path.classList.add('cc-selected');
+      path.addEventListener('mousemove', (event) => showTooltip(shape.ward, event));
+      path.addEventListener('mouseleave', hideTooltip);
+      path.addEventListener('click', (event) => {
+        selectWard(shape.ward);
+        showTooltip(shape.ward, event);
+        if (SCROLL_TABLE_TO_SELECTED_WARD) scrollTableToSelectedRow();
+      });
+      svg.append(path);
+    });
+
+    // 2. The layer.
+    if (!collection) {
+      const note = svgEl('text', { x: 500, y: 60, 'text-anchor': 'middle', 'font-size': 24 });
+      note.textContent = 'Loading layer…';
+      svg.append(note);
+    } else {
+      collection.features.forEach((feature) => {
+        const properties = feature.properties;
+        if (layerInfo.kind === 'fill') {
+          svg.append(svgEl('path', { d: pathData(feature.geometry, toScreen), class: 'cc-layer-shape', 'fill-rule': 'evenodd',
+            fill: style.fill_palette[properties.color_index % style.fill_palette.length], 'fill-opacity': style.fill_opacity,
+            stroke: style.fill_edge_color, 'stroke-width': (style.fill_edge_points * markUnits).toFixed(2) }));
+        } else if (layerInfo.kind === 'single') {
+          // matplotlib's alpha applies to fill and edge alike.
+          svg.append(svgEl('path', { d: pathData(feature.geometry, toScreen), class: 'cc-layer-shape', 'fill-rule': 'evenodd',
+            fill: style.single_fill_color, stroke: style.single_fill_color, opacity: style.single_opacity,
+            'stroke-width': (style.single_edge_points * markUnits).toFixed(2) }));
+        } else if (layerInfo.kind === 'line') {
+          svg.append(svgEl('path', { d: lineData(feature.geometry, toScreen), class: 'cc-layer-shape', fill: 'none',
+            stroke: style.line_color, 'stroke-width': (style.line_points * markUnits).toFixed(2), 'stroke-linejoin': 'round' }));
+        } else if (layerInfo.kind === 'point') {
+          const [pointX, pointY] = toScreen(project(feature.geometry.coordinates));
+          // markersize is the marker's area in points^2, so its diameter is the square root.
+          const radius = (Math.sqrt(style.point_area_points2) / 2) * markUnits;
+          const circle = svgEl('circle', { cx: pointX.toFixed(1), cy: pointY.toFixed(1), r: radius.toFixed(2),
+            class: 'cc-layer-point', fill: style.point_color, stroke: style.point_edge_color,
+            'stroke-width': (style.point_edge_points * markUnits).toFixed(2) });
+          circle.addEventListener('mousemove', (event) => showLayerTooltip(properties, event));
+          circle.addEventListener('mouseleave', hideTooltip);
+          svg.append(circle);
+        }
+      });
+      // 3. Layer labels (only layers with a LAYER_STYLE label column).
+      if (layerInfo.has_labels) {
+        collection.features.forEach((feature) => {
+          const [labelX, labelY] = toScreen(project([feature.properties.label_lon, feature.properties.label_lat]));
+          const text = svgEl('text', { x: labelX.toFixed(1), y: labelY.toFixed(1), class: 'cc-layer-label',
+            'font-size': (style.label_font_points * labelUnits).toFixed(2), fill: style.label_color,
+            'stroke-width': haloWidth.toFixed(2) });
+          text.textContent = feature.properties.label;
+          svg.append(text);
+        });
+      }
+    }
+
+    // 4. Ward outlines and bold ward numbers on top.
+    projected.forEach((shape) => {
+      const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
+      svg.append(svgEl('path', { d: pathText, class: 'cc-ward-outline', fill: 'none', stroke: '#000',
+        'stroke-width': (style.ward_outline_points * markUnits).toFixed(2), 'stroke-linejoin': 'round' }));
+    });
+    projected.forEach((shape) => {
+      const [numberX, numberY] = toScreen(shape.labels.ward_number);
+      const text = svgEl('text', { x: numberX.toFixed(1), y: numberY.toFixed(1), class: 'cc-ward-number',
+        'font-size': (style.ward_number_font_points * labelUnits).toFixed(2), 'stroke-width': haloWidth.toFixed(2) });
+      text.textContent = String(Number(shape.ward));   // the notebook prints the layer's unpadded ward
+      svg.append(text);
+    });
   }
 
   // Map View labels as ward_views draws them (scripts/ward_maps.py draw_ward_labels and
@@ -459,6 +599,11 @@
         items.push(el('span', {}, [el('span', { class: 'cc-swatch', style: swatchStyle }),
                                    document.createTextNode(`${vote} (${counts[vote]})`)]));
       });
+    } else if (state.view === 'wards') {
+      const layerInfo = data.meta.layers.by_layer[state.layer];
+      const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
+      const colorNote = layerInfo.kind === 'fill' ? `, colored so neighbors differ (${layerInfo.colors_used} colors)` : '';
+      items.push(el('span', { text: `${layerLabel}: ${layerInfo.feature_count} features${colorNote}. Black lines and bold numbers = wards.` }));
     } else {
       items.push(el('span', { text: 'Hover or tap a ward for its alder.' }));
     }
@@ -489,6 +634,15 @@
     if (top + box.height > window.innerHeight) top = mouseEvent.clientY - box.height - padding;
     ui.tooltip.style.left = `${Math.max(4, left)}px`;
     ui.tooltip.style.top = `${Math.max(4, top)}px`;
+  }
+
+  // Hover card for a point on the layer map: its hover_name (export LAYER_HOVER_NAME_COLUMN).
+  function showLayerTooltip(properties, mouseEvent) {
+    const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
+    ui.tooltip.replaceChildren(el('strong', { text: properties.hover_name || '' }), el('div', { text: layerLabel }));
+    ui.tooltip.style.display = 'block';
+    ui.tooltip.style.left = `${mouseEvent.clientX + 14}px`;
+    ui.tooltip.style.top = `${mouseEvent.clientY + 14}px`;
   }
 
   function hideTooltip() {
@@ -634,10 +788,35 @@
     return select;
   }
 
+  function layerSelect() {
+    const select = el('select', { class: 'cc-select', 'aria-label': 'Map layer' },
+      LAYER_OPTIONS.map((option) => {
+        const element = el('option', { value: option.key, text: option.label });
+        if (option.key === state.layer) element.selected = true;
+        return element;
+      }));
+    select.addEventListener('change', () => { state.layer = select.value; render(); });
+    return select;
+  }
+
+  // Each layer file is fetched the first time it is shown; the map redraws when it arrives.
+  function ensureLayerLoaded() {
+    const layer = state.layer;
+    if (data.layers[layer] || data.layers[`${layer}:loading`]) return;
+    data.layers[`${layer}:loading`] = true;
+    fetchJson(`layer_${layer}.geojson`).then((collection) => {
+      data.layers[layer] = collection;
+      if (state.view === 'wards' && state.layer === layer) drawMap();
+    }).catch((error) => {
+      ui.map.replaceChildren(el('div', { class: 'cc-error', text: `Could not load layer ${layer} (${error.message}).` }));
+    });
+  }
+
   function render() {
     ui.controls.replaceChildren(...[
       segmented(TAB_OPTIONS, state.tab, (key) => { state.tab = key; updateView(); render(); }),
       state.tab === 'alders' ? alderMeasureSelect() : null,   // dropdown only on the Alders tab
+      state.tab === 'wards' ? layerSelect() : null,           // layer dropdown only on the Wards tab
       segmented(SHAPE_OPTIONS, state.shapes, (key) => { state.shapes = key; render(); }),
     ].filter(Boolean));
     const showVotes = state.view === 'votes';
@@ -645,6 +824,7 @@
     ui.eventDetails.style.display = showVotes ? '' : 'none';
     if (showVotes && !ui.eventPicker.childElementCount) drawEventPicker();
     if (showVotes) drawEventDetails();
+    if (state.view === 'wards') ensureLayerLoaded();
     drawMap();
     drawTable();
   }
@@ -696,7 +876,7 @@
       state.eventId = data.meta.default_split_event_id || (data.events[0] && data.events[0].event_id);
       buildPage(container);
       render();
-      document.addEventListener('click', (event) => { if (!event.target.closest('.cc-ward')) hideTooltip(); });
+      document.addEventListener('click', (event) => { if (!event.target.closest('.cc-ward, .cc-ward-hit')) hideTooltip(); });
     }).catch((error) => {
       container.replaceChildren(el('div', { class: 'cc-error',
         text: `Could not load the dashboard data (${error.message}). If you opened the file directly, serve docs/ with a local web server.` }));
