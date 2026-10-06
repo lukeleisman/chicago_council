@@ -166,7 +166,7 @@ def write_geojson(shapes, file_name, labels_by_ward=None):
     point ward_maps.draw_ward_labels uses), taken in the shapes' own CRS, then converted.
     labels_by_ward: optional {ward: {layout: [lon, lat]}}, written as property `labels` (Map View
     label anchors from real_map_label_layout(); the page uses these instead of label_lon/lat)."""
-    shapes = shapes[["ward", "geometry"]].copy()
+    shapes = shapes[[column for column in ["ward", "color_index", "geometry"] if column in shapes.columns]].copy()
     label_points = gpd.GeoSeries(shapes.representative_point(), crs=shapes.crs).to_crs("EPSG:4326")
     shapes["label_lon"] = label_points.x.round(COORDINATE_DECIMALS).values
     shapes["label_lat"] = label_points.y.round(COORDINATE_DECIMALS).values
@@ -260,7 +260,13 @@ def write_json(data, file_name):
 
 
 def export_shapes(labels_by_ward):
-    real_wards = ward_maps.load_ward_shapes("real").to_crs(SIMPLIFY_CRS)
+    real_wards = ward_maps.load_ward_shapes("real")
+    # Wards tab "Street map": wards filled by neighbor color, as map_layers_review's wards_2023 large
+    # map (map_layers.neighbor_color_indexes on the unsimplified EPSG:3857 wards, raw file order;
+    # verified 2026-10-05 to give the notebook's exact assignment, 5 colors).
+    real_wards["color_index"] = map_layers.neighbor_color_indexes(real_wards)
+    print(f"ward fill colors: {real_wards.color_index.max() + 1}")
+    real_wards = real_wards.to_crs(SIMPLIFY_CRS)
     point_count_before = real_wards.geometry.count_coordinates().sum()
     real_wards["geometry"] = real_wards.geometry.simplify(
         WARD_SIMPLIFY_TOLERANCE_METERS * FEET_PER_METER, preserve_topology=True)

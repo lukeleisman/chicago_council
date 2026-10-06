@@ -47,7 +47,7 @@
   // Tabs, in button order (user, 2026-10-05: tenure and absence moved into a dropdown under Alders).
   const TAB_OPTIONS = [
     { key: 'alders', label: 'Alders' },
-    { key: 'votes', label: 'Split votes' },
+    { key: 'votes', label: 'Votes' },   // was 'Split votes' (user, 2026-10-05)
     { key: 'wards', label: 'Wards' },
   ];
   const DEFAULT_TAB = 'alders';
@@ -61,6 +61,7 @@
   // Dropdown under the Wards tab: which map layer is drawn under the wards (user, 2026-10-05; no
   // precincts, no census tracts). Keys = export DASHBOARD_LAYERS; each file is fetched on first pick.
   const LAYER_OPTIONS = [
+    { key: 'street_map', label: 'Street map' },   // not a data layer: basemap tiles + ward fill (below)
     { key: 'community_areas', label: 'Community areas' },
     { key: 'neighborhoods', label: 'Neighborhoods' },
     { key: 'zip_codes', label: 'ZIP codes' },
@@ -83,6 +84,20 @@
   const LAYER_MAP_POINT_SCALE = 1.5;
   // Multiplies line widths (layer edges, rail lines, ward outlines). 1 = the notebook's proportions.
   const LAYER_MAP_LINE_SCALE = 1;
+  // "Street map" (user, 2026-10-05: like map_layers_review cell [7]'s wards_2023 map, "more see
+  // through"): Esri street tiles (the notebook's BASEMAP_CHOICE "street"), wards filled by
+  // neighbor color (wards_real.geojson color_index, FILL_PALETTE) at STREET_MAP_WARD_FILL_OPACITY,
+  // then the usual black outlines and bold ward numbers.
+  const STREET_MAP_TILE_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}';
+  // Tile zoom level. 12 = about 38 m per tile pixel at Chicago; the whole city is ~5 x 6 tiles
+  // (~1,300 px of tile across), sharp on a ~700 px wide map at 2x screen density.
+  const STREET_MAP_TILE_ZOOM = 12;
+  // Each tile drawn this many map units wider/taller, so anti-aliasing doesn't leave hairline seams.
+  const STREET_MAP_TILE_SEAM_OVERLAP = 0.5;
+  const STREET_MAP_WARD_FILL_OPACITY = 0.25;   // notebook FILL_OPACITY is 0.45; user asked for more see-through
+  // Attribution, as contextily prints it on the notebook map (Esri requires it).
+  const STREET_MAP_ATTRIBUTION = 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI, Esri China (Hong Kong), Esri (Thailand), TomTom, 2012';
+
   // What each ward holds, per layer: docs/data/ward_layer_summary.json, made by
   // scripts/ward_layer_overlaps.py (rules there: WARD_SUMMARY_RULES). Each layer is "list" (names on
   // the tile) or "count" (number on the tile; names in the hover card and the table).
@@ -104,9 +119,14 @@
   // Text put before a name when shown (names themselves are as in the raw data, e.g. community
   // areas in capitals).
   const LAYER_NAME_PREFIX = { police_districts: 'District ' };
-  // Tile View: names in these layers are broken onto separate lines at each ", " (ward offices:
-  // "121 North LaSalle Street" / "Room 300"; else the longest address sets a tiny font on every tile).
-  const TILE_SPLIT_NAMES_AT_COMMA = ['ward_offices'];
+  // Tile View: in these layers the names are word-wrapped to fill the tile, at the largest font that
+  // fits (user, 2026-10-05: ward office addresses "bigger with line wrapping ... very close to the
+  // edges"). Widths are measured with the page's own font. Replaced the earlier split at ", ".
+  const TILE_WRAP_LAYERS = ['ward_offices'];
+  // Space kept free inside the tile edge for wrapped text, as a share of the tile's width / height.
+  const TILE_WRAP_EDGE_MARGIN = 0.03;
+  // Line step for tile text, in font sizes (the drawing loop's spacing).
+  const TILE_LINE_STEP = 1.15;
 
   // Labels on tiles: ward number + last name (+ the view's value), font fitted to the tile.
   // Labels on the real map (Map View):
@@ -193,7 +213,7 @@
 #council-app .cc-label-notebook { font-weight: 400; fill: #000; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
 /* Wards tab layer map: wards are a transparent hit area under the layer; outlines drawn on top. */
 #council-app .cc-ward-hit { fill: transparent; stroke: none; cursor: pointer; }
-#council-app .cc-ward-hit.cc-selected { fill: rgba(255, 214, 0, 0.25); }
+#council-app .cc-ward-hit.cc-selected { fill: rgba(255, 214, 0, 0.25) !important; fill-opacity: 1 !important; }
 #council-app .cc-layer-shape, #council-app .cc-ward-outline, #council-app .cc-layer-label { pointer-events: none; }
 #council-app .cc-layer-point { cursor: default; }
 #council-app .cc-layer-label { text-anchor: middle; dominant-baseline: central; font-style: italic; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
@@ -211,6 +231,8 @@
 #council-app .cc-tally { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; margin-bottom: 8px; }
 #council-app table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
 #council-app th, #council-app td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; }
+/* Header row stays at the top while the table scrolls (user, 2026-10-05). */
+#council-app thead th { position: sticky; top: 0; z-index: 1; background: var(--cc-surface); box-shadow: inset 0 -1px 0 var(--cc-line); }
 #council-app th { cursor: pointer; user-select: none; color: var(--cc-ink-2); font-weight: 600; white-space: nowrap; }
 #council-app td.cc-num, #council-app th.cc-num { text-align: right; }
 #council-app tr.cc-selected td { background: #fff4d6; }
@@ -385,6 +407,36 @@
       + (entry.shares ? ` ${Math.round(entry.shares[index] * 100)}%` : ''));
   }
 
+  // Largest font (steps of 0.25, up to TILE_MAX_FONT_SIZE) at which `heading` plus `body`, word-wrapped,
+  // fits inside the tile less TILE_WRAP_EDGE_MARGIN. Widths measured on a canvas with the page's font.
+  const measureCanvas = document.createElement('canvas').getContext('2d');
+  function textWidth(content, fontSize, weight) {
+    measureCanvas.font = `${weight} ${fontSize}px ${getComputedStyle(document.getElementById(CONTAINER_ID)).fontFamily}`;
+    return measureCanvas.measureText(content).width;
+  }
+  function wrapToTile(heading, body, tileWidth, tileHeight) {
+    const usableWidth = tileWidth * (1 - 2 * TILE_WRAP_EDGE_MARGIN);
+    const usableHeight = tileHeight * (1 - 2 * TILE_WRAP_EDGE_MARGIN);
+    const words = body.split(' ');
+    for (let fontSize = TILE_MAX_FONT_SIZE; fontSize > 1; fontSize -= 0.25) {
+      if (textWidth(heading, fontSize, 700) > usableWidth) continue;
+      const wrapped = [];
+      let current = '';
+      let fits = true;
+      words.forEach((word) => {
+        const candidate = current ? `${current} ${word}` : word;
+        if (textWidth(candidate, fontSize, 400) <= usableWidth) { current = candidate; return; }
+        if (current) wrapped.push(current);
+        current = word;
+        if (textWidth(word, fontSize, 400) > usableWidth) fits = false;   // one word wider than the tile
+      });
+      if (current) wrapped.push(current);
+      const lineCount = wrapped.length + 1;
+      if (fits && lineCount * fontSize * TILE_LINE_STEP <= usableHeight) return { lines: [heading, ...wrapped], fontSize };
+    }
+    return { lines: [heading, body], fontSize: 1 };
+  }
+
   /* ── Map ──────────────────────────────────────────────────────────────── */
 
   function drawMap() {
@@ -395,7 +447,7 @@
       // labels: Map View anchors per layout, {layout: [lon, lat]} (real wards only).
       const labels = {};
       Object.entries(feature.properties.labels || {}).forEach(([layout, lonLat]) => { labels[layout] = project(lonLat); });
-      return { ward: feature.properties.ward, rings, labels,
+      return { ward: feature.properties.ward, rings, labels, colorIndex: feature.properties.color_index,
                label: project([feature.properties.label_lon, feature.properties.label_lat]) };
     });
 
@@ -421,7 +473,7 @@
     svg.append(definitions);
 
     if (state.view === 'wards' && state.shapes === 'real') {
-      drawLayerMap(svg, projected, toScreen, scale);
+      drawLayerMap(svg, projected, toScreen, scale, { minX, maxX, minY, maxY });
       ui.map.replaceChildren(svg);
       drawLegend();
       return;
@@ -466,7 +518,9 @@
         const ys = shape.rings[0].map((point) => toScreen(point)[1]);
         const tileWidth = Math.max(...xs) - Math.min(...xs);
         const tileHeight = Math.max(...ys) - Math.min(...ys);
-        if (state.view === 'wards') {
+        if (state.view === 'wards' && !data.wardLayerSummary[state.layer]) {
+          lines = [`${Number(shape.ward)} ${alder.label_name}`];   // Street map: nothing per ward to list
+        } else if (state.view === 'wards') {
           // Ward number, then the layer's names (at most TILE_MAX_LIST_LINES) or its count.
           const entry = layerEntry(shape.ward);
           lines = [String(Number(shape.ward))];
@@ -475,9 +529,7 @@
           } else {
             const shown = entry.names.slice(0, TILE_MAX_LIST_LINES).map(displayName);
             const hidden = entry.names.length - shown.length;
-            const listLines = hidden > 0 ? [...shown.slice(0, -1), `+${hidden + 1} more`] : shown;
-            lines.push(...(TILE_SPLIT_NAMES_AT_COMMA.includes(state.layer)
-              ? listLines.flatMap((line) => line.split(', ')) : listLines));
+            lines.push(...(hidden > 0 ? [...shown.slice(0, -1), `+${hidden + 1} more`] : shown));
           }
         } else {
           lines = [`${Number(shape.ward)} ${alder.label_name}`];
@@ -486,6 +538,9 @@
         // Font fits the tile: width (about 0.58 em per character) and height (lines x 1.2 em).
         const longest = Math.max(...lines.map((line) => line.length));
         fontSize = Math.min(tileWidth / (0.58 * longest), tileHeight / (lines.length * 1.35), TILE_MAX_FONT_SIZE);
+        if (state.view === 'wards' && TILE_WRAP_LAYERS.includes(state.layer)) {
+          ({ lines, fontSize } = wrapToTile(lines[0], lines.slice(1).join(' '), tileWidth, tileHeight));
+        }
       }
       if (state.view === 'wards') { tileLabels.push({ labelX, labelY, ink, lines, fontSize }); return; }
       lines.forEach((line, index) => {
@@ -501,7 +556,7 @@
     tileLabels.forEach(({ labelX, labelY, ink, lines, fontSize }) => {
       const size = WARDS_TILE_FONT_FIT === 'uniform' ? uniformSize : fontSize;
       lines.forEach((line, index) => {
-        const offset = (index - (lines.length - 1) / 2) * size * 1.15;
+        const offset = (index - (lines.length - 1) / 2) * size * TILE_LINE_STEP;
         // First line = ward number, bold; the rest normal weight.
         const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
                                      'font-size': size.toFixed(1), fill: ink,
@@ -532,8 +587,29 @@
   // color_index / parks one green / rail lines / points), italic layer labels with a white halo,
   // then black ward outlines and bold ward numbers on top. Wards stay clickable through a
   // transparent hit area drawn first; points sit above it so they can be hovered.
-  function drawLayerMap(svg, projected, toScreen, scale) {
+  // Esri tiles covering the map's bounding box, each placed by its corners (this page's projection is
+  // Web Mercator in degrees, the same as the tiles', so tiles are plain rectangles).
+  function drawStreetTiles(svg, toScreen, bounds) {
+    const tileCount = 2 ** STREET_MAP_TILE_ZOOM;
+    const tileX = (longitude) => Math.floor(((longitude + 180) / 360) * tileCount);
+    const tileY = (mercatorDegrees) => Math.floor(((1 - mercatorDegrees / 180) / 2) * tileCount);
+    const cornerLongitude = (x) => (x / tileCount) * 360 - 180;
+    const cornerMercator = (y) => (1 - (2 * y) / tileCount) * 180;
+    for (let x = tileX(bounds.minX); x <= tileX(bounds.maxX); x += 1) {
+      for (let y = tileY(bounds.maxY); y <= tileY(bounds.minY); y += 1) {
+        const [left, top] = toScreen([cornerLongitude(x), cornerMercator(y)]);
+        const [right, bottom] = toScreen([cornerLongitude(x + 1), cornerMercator(y + 1)]);
+        svg.append(svgEl('image', { href: STREET_MAP_TILE_URL.replace('{z}', STREET_MAP_TILE_ZOOM).replace('{x}', x).replace('{y}', y),
+          x: left.toFixed(2), y: top.toFixed(2),
+          width: (right - left + STREET_MAP_TILE_SEAM_OVERLAP).toFixed(2), height: (bottom - top + STREET_MAP_TILE_SEAM_OVERLAP).toFixed(2),
+          preserveAspectRatio: 'none', class: 'cc-layer-shape' }));
+      }
+    }
+  }
+
+  function drawLayerMap(svg, projected, toScreen, scale, bounds) {
     const style = data.meta.layers.style;
+    const isStreetMap = state.layer === 'street_map';
     const unitsPerPoint = data.meta.real_map_labels.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale;
     const markUnits = unitsPerPoint * LAYER_MAP_LINE_SCALE;
     const pointUnits = unitsPerPoint * LAYER_MAP_POINT_SCALE;
@@ -542,10 +618,15 @@
     const layerInfo = data.meta.layers.by_layer[state.layer];
     const collection = data.layers[state.layer];
 
-    // 1. Ward hit areas (transparent).
+    if (isStreetMap) drawStreetTiles(svg, toScreen, bounds);
+    // 1. Ward hit areas (transparent; on the street map, filled by neighbor color).
     projected.forEach((shape) => {
       const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
       const path = svgEl('path', { d: pathText, class: 'cc-ward-hit', 'fill-rule': 'evenodd', 'data-ward': shape.ward });
+      if (isStreetMap) {
+        path.style.fill = style.fill_palette[shape.colorIndex % style.fill_palette.length];
+        path.style.fillOpacity = STREET_MAP_WARD_FILL_OPACITY;
+      }
       if (shape.ward === state.selectedWard) path.classList.add('cc-selected');
       path.addEventListener('mousemove', (event) => showTooltip(shape.ward, event));
       path.addEventListener('mouseleave', hideTooltip);
@@ -558,7 +639,9 @@
     });
 
     // 2. The layer.
-    if (!collection) {
+    if (isStreetMap) {
+      // nothing more: tiles and ward fill are drawn above
+    } else if (!collection) {
       const note = svgEl('text', { x: 500, y: 60, 'text-anchor': 'middle', 'font-size': 24 });
       note.textContent = 'Loading layer…';
       svg.append(note);
@@ -683,6 +766,10 @@
         items.push(el('span', {}, [el('span', { class: 'cc-swatch', style: swatchStyle }),
                                    document.createTextNode(`${vote} (${counts[vote]})`)]));
       });
+    } else if (state.view === 'wards' && state.layer === 'street_map') {
+      items.push(el('span', { text: state.shapes === 'real'
+        ? 'Wards colored so neighbors differ, over a street map.' : 'Street map: Map View only.' }));
+      if (state.shapes === 'real') items.push(el('span', { style: 'font-size:11px', text: STREET_MAP_ATTRIBUTION }));
     } else if (state.view === 'wards') {
       const layerInfo = data.meta.layers.by_layer[state.layer];
       const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
@@ -819,7 +906,7 @@
     ];
     if (state.view === 'votes') {
       columns.push({ key: 'vote', label: 'Vote', value: (alder) => voteOf(alder.ward) });
-    } else if (state.view === 'wards') {
+    } else if (state.view === 'wards' && data.wardLayerSummary[state.layer]) {
       // Count, then every name (with the share of the ward, where the rule has one).
       columns.push(
         { key: 'count', label: 'Count', value: (alder) => layerEntry(alder.ward).names.length, num: true },
@@ -904,6 +991,7 @@
   // Each layer file is fetched the first time it is shown; the map redraws when it arrives.
   function ensureLayerLoaded() {
     const layer = state.layer;
+    if (layer === 'street_map') return;   // no layer file
     if (data.layers[layer] || data.layers[`${layer}:loading`]) return;
     data.layers[`${layer}:loading`] = true;
     fetchJson(`layer_${layer}.geojson`).then((collection) => {
