@@ -35,6 +35,36 @@
   // highlighted row is visible. false = the table stays where it is (the first draft).
   const SCROLL_TABLE_TO_SELECTED_WARD = true;
 
+  // Zoom (user, 2026-10-05: option A, zoom within the drawn map, in every view). Written here, not
+  // with a library: wheel, drag, pinch and +/−/reset buttons. Zoom is kept per Map View / Tile View.
+  const ZOOM_MAX = 12;          // most zoomed in, times the whole-city view
+  const ZOOM_BUTTON_STEP = 1.5; // + and − buttons multiply / divide the zoom by this
+  // Mouse wheel / trackpad:
+  //   'modifier' = zoom only with Ctrl or ⌘ held (and trackpad pinch, which browsers report as Ctrl+wheel);
+  //                a plain wheel scrolls the page, so the map doesn't trap scrolling in WordPress
+  //   'always'   = every wheel turn over the map zooms
+  const ZOOM_WHEEL = 'modifier';
+  // A press that moves less than this (screen px) is a click (select a ward), not a drag.
+  const ZOOM_DRAG_THRESHOLD_PX = 4;
+  // Label size while zoomed, per view (user, 2026-10-05: "keep the labels the same size for now"; a
+  // setting, to see both; "grow to a certain size, then stay" is 'grow_until'):
+  //   'constant'   = labels (and layer points) keep their on-screen size as you zoom
+  //   'grow'       = labels grow with the map
+  //   'grow_until' = labels grow with the map up to ZOOM_LABEL_MAX_GROWTH times, then stay that size
+  // Tile View is 'grow': its text is fitted inside each tile, so constant-size text never gets
+  // easier to read there. OPEN QUESTION for the user.
+  const ZOOM_LABELS_BY_SHAPES = { real: 'constant', tiles_grid: 'grow' };
+  const ZOOM_LABEL_MAX_GROWTH = 2;
+  // Line widths drawn in map units (layer edges, rail lines, ward outlines on the Wards tab):
+  //   'constant' = keep their on-screen width; 'grow' = thicken with the map
+  // (Alders/Votes ward outlines already keep a constant screen width: CSS non-scaling-stroke.)
+  const ZOOM_LINE_WIDTH = 'constant';
+  // Street map: sharper tiles as you zoom. Tile zoom = STREET_MAP_TILE_ZOOM + floor(log2(zoom)),
+  // at most this; the detail tiles cover only what's on screen, over the whole-city base tiles.
+  const STREET_MAP_MAX_TILE_ZOOM = 17;
+  // Wait this long after the last zoom/pan movement before loading detail tiles (ms).
+  const STREET_MAP_DETAIL_DELAY_MS = 250;
+
   // Ward shapes offered, in toggle order, and the one shown first (user, 2026-10-05: real map
   // first and default; pushed tiles dropped from the dashboard).
   //   real = 2023 boundaries; tiles_grid = hand-specified grid
@@ -206,6 +236,14 @@
 #council-app .cc-card { background: var(--cc-surface); border: 1px solid var(--cc-line); border-radius: 10px; padding: 12px; }
 /* Map never taller than MAP_MAX_HEIGHT_VH of the window; narrower maps center. */
 #council-app .cc-map svg { width: 100%; height: auto; max-height: ${MAP_MAX_HEIGHT_VH}vh; display: block; margin: 0 auto; }
+/* Zoom: the frame clips the zoomed map; buttons sit in its top-right corner. */
+#council-app .cc-zoom-frame { position: relative; overflow: hidden; }
+#council-app .cc-zoom-frame svg { cursor: grab; user-select: none; -webkit-user-select: none; }
+#council-app .cc-zoom-frame svg:active { cursor: grabbing; }
+#council-app .cc-zoom-buttons { position: absolute; top: 6px; right: 6px; display: flex; flex-direction: column; gap: 4px; }
+#council-app .cc-zoom-buttons button { width: 30px; height: 30px; padding: 0; font: inherit; font-size: 18px; line-height: 1; cursor: pointer;
+  background: var(--cc-surface); color: var(--cc-ink); border: 1px solid var(--cc-line); border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+#council-app .cc-zoom-hint { font-size: 11px; color: var(--cc-ink-2); text-align: right; margin-top: 2px; }
 #council-app .cc-ward { stroke: #333; stroke-width: 0.8; vector-effect: non-scaling-stroke; cursor: pointer; }
 #council-app .cc-ward:hover, #council-app .cc-ward.cc-selected { stroke: #000; stroke-width: 2.5; }
 #council-app .cc-label { pointer-events: none; text-anchor: middle; dominant-baseline: central; font-weight: 600; }
@@ -334,6 +372,8 @@
     eventId: null,
     selectedWard: null,
     sort: { column: 'ward', ascending: true },
+    // Zoom per ward shapes: scale k and translation (x, y) in SVG units; k = 1 = whole city.
+    zoomByShapes: Object.fromEntries(SHAPE_OPTIONS.map((option) => [option.key, { k: 1, x: 0, y: 0 }])),
   };
   const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {},
                  wardLayerSummary: {} };
@@ -472,10 +512,11 @@
     definitions.append(hatch);
     svg.append(definitions);
 
+    const geometry = { toScreen, bounds: { minX, maxX, minY, maxY }, width: width + 2 * margin, height: height + 2 * margin,
+                       fromScreen: ([screenX, screenY]) => [minX + (screenX - margin) / scale, maxY - (screenY - margin) / scale] };
     if (state.view === 'wards' && state.shapes === 'real') {
-      drawLayerMap(svg, projected, toScreen, scale, { minX, maxX, minY, maxY });
-      ui.map.replaceChildren(svg);
-      drawLegend();
+      drawLayerMap(svg, projected, toScreen, scale, geometry.bounds);
+      finishMap(svg, geometry);
       return;
     }
 
@@ -497,8 +538,7 @@
     // Labels.
     if (state.shapes === 'real' && REAL_MAP_LABEL === 'notebook_layout') {
       drawNotebookLabels(svg, projected, toScreen, scale);
-      ui.map.replaceChildren(svg);
-      drawLegend();
+      finishMap(svg, geometry);
       return;
     }
     const tileLabels = [];   // Wards tab: drawn after sizing (WARDS_TILE_FONT_FIT)
@@ -546,7 +586,8 @@
       lines.forEach((line, index) => {
         const offset = (index - (lines.length - 1) / 2) * fontSize * 1.15;
         const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
-                                     'font-size': fontSize.toFixed(1), fill: ink });
+                                     'font-size': fontSize.toFixed(1), fill: ink,
+                                     'data-anchor-x': labelX.toFixed(1), 'data-anchor-y': labelY.toFixed(1) });
         text.textContent = line;
         svg.append(text);
       });
@@ -560,14 +601,185 @@
         // First line = ward number, bold; the rest normal weight.
         const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
                                      'font-size': size.toFixed(1), fill: ink,
+                                     'data-anchor-x': labelX.toFixed(1), 'data-anchor-y': labelY.toFixed(1),
                                      style: index === 0 ? 'font-weight:700' : 'font-weight:400' });
         text.textContent = line;
         svg.append(text);
       });
     });
 
-    ui.map.replaceChildren(svg);
+    finishMap(svg, geometry);
+  }
+
+  /* ── Zoom ─────────────────────────────────────────────────────────────── */
+
+  // Moves everything drawn (not <defs>) into one group that zooms, puts the map on the page, adds
+  // the zoom buttons and handlers, and re-applies this view's saved zoom.
+  function finishMap(svg, geometry) {
+    const zoomLayer = svgEl('g', { class: 'cc-zoom-layer' });
+    [...svg.childNodes].filter((node) => node.tagName !== 'defs').forEach((node) => zoomLayer.append(node));
+    svg.append(zoomLayer);
+    ui.mapGeometry = geometry;
+    ui.zoomLayer = zoomLayer;
+    ui.mapSvg = svg;
+    const button = (label, title, onClick) => el('button', { type: 'button', title, 'aria-label': title, text: label, onclick: onClick });
+    const controls = el('div', { class: 'cc-zoom-buttons' }, [
+      button('+', 'Zoom in', () => zoomBy(ZOOM_BUTTON_STEP)),
+      button('−', 'Zoom out', () => zoomBy(1 / ZOOM_BUTTON_STEP)),
+      button('⟲', 'Show the whole city', () => setZoom({ k: 1, x: 0, y: 0 })),
+    ]);
+    const hint = el('div', { class: 'cc-zoom-hint', text: ZOOM_WHEEL === 'modifier' ? 'Ctrl/⌘ + scroll or pinch to zoom · drag to move' : 'Scroll to zoom · drag to move' });
+    ui.map.replaceChildren(el('div', { class: 'cc-zoom-frame' }, [svg, controls, hint]));
+    attachZoomHandlers(svg);
+    applyZoom();
     drawLegend();
+  }
+
+  function currentZoom() {
+    return state.zoomByShapes[state.shapes];
+  }
+
+  // Keeps the map covering its frame: no panning past the city's edges, no zooming out past 1.
+  function clampZoom({ k, x, y }) {
+    const { width, height } = ui.mapGeometry;
+    const scale = Math.min(ZOOM_MAX, Math.max(1, k));
+    return { k: scale, x: Math.min(0, Math.max(width * (1 - scale), x)), y: Math.min(0, Math.max(height * (1 - scale), y)) };
+  }
+
+  function setZoom(zoom) {
+    state.zoomByShapes[state.shapes] = clampZoom(zoom);
+    applyZoom();
+  }
+
+  // Zoom by `factor` about a point in SVG units (default: the middle of the map).
+  function zoomBy(factor, point) {
+    const zoom = currentZoom();
+    const [pointX, pointY] = point || [ui.mapGeometry.width / 2, ui.mapGeometry.height / 2];
+    const newScale = Math.min(ZOOM_MAX, Math.max(1, zoom.k * factor));
+    const ratio = newScale / zoom.k;
+    setZoom({ k: newScale, x: pointX - (pointX - zoom.x) * ratio, y: pointY - (pointY - zoom.y) * ratio });
+  }
+
+  // How much labels are scaled back so their screen size follows ZOOM_LABELS_BY_SHAPES.
+  function labelCounterScale(k) {
+    const mode = ZOOM_LABELS_BY_SHAPES[state.shapes];
+    if (mode === 'grow') return 1;
+    if (mode === 'grow_until') return Math.min(k, ZOOM_LABEL_MAX_GROWTH) / k;
+    return 1 / k;   // constant
+  }
+
+  function applyZoom() {
+    const { k, x, y } = currentZoom();
+    ui.zoomLayer.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${k.toFixed(4)})`);
+    // Labels and layer points: scaled about their own anchor, so a label's lines stay together.
+    const labelScale = labelCounterScale(k);
+    ui.zoomLayer.querySelectorAll('[data-anchor-x]').forEach((element) => {
+      const anchorX = element.dataset.anchorX; const anchorY = element.dataset.anchorY;
+      if (labelScale === 1) element.removeAttribute('transform');
+      else element.setAttribute('transform', `translate(${anchorX},${anchorY}) scale(${labelScale.toFixed(4)}) translate(${-anchorX},${-anchorY})`);
+    });
+    const lineScale = ZOOM_LINE_WIDTH === 'constant' ? 1 / k : 1;
+    ui.zoomLayer.querySelectorAll('[data-base-stroke]').forEach((element) => {
+      element.setAttribute('stroke-width', (element.dataset.baseStroke * lineScale).toFixed(3));
+    });
+    ui.mapSvg.style.touchAction = k > 1 ? 'none' : 'pan-x pan-y';   // at whole-city view a finger scrolls the page
+    scheduleDetailTiles();
+  }
+
+  // Street map: after zooming stops, load sharper tiles for what's on screen.
+  function scheduleDetailTiles() {
+    clearTimeout(ui.detailTimer);
+    ui.detailTimer = setTimeout(loadDetailTiles, STREET_MAP_DETAIL_DELAY_MS);
+  }
+
+  function loadDetailTiles() {
+    const detailGroup = ui.zoomLayer && ui.zoomLayer.querySelector('.cc-tiles-detail');
+    if (!detailGroup) return;
+    const { k, x, y } = currentZoom();
+    const tileZoom = Math.min(STREET_MAP_MAX_TILE_ZOOM, STREET_MAP_TILE_ZOOM + Math.floor(Math.log2(k)));
+    if (tileZoom === STREET_MAP_TILE_ZOOM) { detailGroup.replaceChildren(); return; }
+    // Visible part of the map, in this page's map coordinates. Measured from the SVG element's box on
+    // screen, which can be wider than the drawing (height-limited maps leave side margins that show
+    // zoomed content too).
+    const { fromScreen, toScreen } = ui.mapGeometry;
+    const box = ui.mapSvg.getBoundingClientRect();
+    const [screenLeft, screenTop] = svgPoint(ui.mapSvg, box.left, box.top);
+    const [screenRight, screenBottom] = svgPoint(ui.mapSvg, box.right, box.bottom);
+    const [left, top] = fromScreen([(screenLeft - x) / k, (screenTop - y) / k]);
+    const [right, bottom] = fromScreen([(screenRight - x) / k, (screenBottom - y) / k]);
+    const temporary = svgEl('g');
+    const newTiles = drawStreetTiles(temporary, toScreen, { minX: left, maxX: right, minY: bottom, maxY: top }, tileZoom, 'cc-tiles-detail');
+    detailGroup.replaceWith(newTiles);
+  }
+
+  function svgPoint(svg, clientX, clientY) {
+    const point = new DOMPoint(clientX, clientY).matrixTransform(svg.getScreenCTM().inverse());
+    return [point.x, point.y];
+  }
+
+  // Wheel (see ZOOM_WHEEL), drag to pan, two-finger pinch. A press that moves less than
+  // ZOOM_DRAG_THRESHOLD_PX stays a click, so wards can still be selected.
+  function attachZoomHandlers(svg) {
+    svg.addEventListener('wheel', (event) => {
+      if (ZOOM_WHEEL === 'modifier' && !event.ctrlKey && !event.metaKey) return;   // let the page scroll
+      event.preventDefault();
+      zoomBy(Math.exp(-event.deltaY * 0.002), svgPoint(svg, event.clientX, event.clientY));
+    }, { passive: false });
+
+    const pointers = new Map();   // pointerId -> latest [clientX, clientY]
+    let gesture = null;           // start of the current drag or pinch
+    let dragged = false;
+    const startGesture = () => {
+      const points = [...pointers.values()];
+      const zoom = currentZoom();
+      if (points.length === 1) {
+        gesture = { kind: 'drag', start: points[0], zoom: { ...zoom } };
+      } else if (points.length === 2) {
+        const middle = [(points[0][0] + points[1][0]) / 2, (points[0][1] + points[1][1]) / 2];
+        gesture = { kind: 'pinch', distance: Math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1]),
+                    middle: svgPoint(svg, ...middle), zoom: { ...zoom } };
+      }
+    };
+    svg.addEventListener('pointerdown', (event) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      pointers.set(event.pointerId, [event.clientX, event.clientY]);
+      dragged = false;
+      startGesture();
+    });
+    // Pan for a one-pointer drag that has moved to (clientX, clientY).
+    const dragTo = (clientX, clientY, pointerId) => {
+      const moveX = clientX - gesture.start[0]; const moveY = clientY - gesture.start[1];
+      if (!dragged && Math.hypot(moveX, moveY) < ZOOM_DRAG_THRESHOLD_PX) return;
+      if (!dragged) { dragged = true; svg.setPointerCapture(pointerId); hideTooltip(); }
+      const unitsPerPixel = 1 / svg.getScreenCTM().a;
+      setZoom({ k: gesture.zoom.k, x: gesture.zoom.x + moveX * unitsPerPixel, y: gesture.zoom.y + moveY * unitsPerPixel });
+    };
+    svg.addEventListener('pointermove', (event) => {
+      if (!pointers.has(event.pointerId) || !gesture) return;
+      pointers.set(event.pointerId, [event.clientX, event.clientY]);
+      const points = [...pointers.values()];
+      if (gesture.kind === 'drag' && points.length === 1) {
+        dragTo(event.clientX, event.clientY, event.pointerId);
+      } else if (gesture.kind === 'pinch' && points.length === 2) {
+        dragged = true;
+        const distance = Math.hypot(points[0][0] - points[1][0], points[0][1] - points[1][1]);
+        const newScale = Math.min(ZOOM_MAX, Math.max(1, gesture.zoom.k * distance / gesture.distance));
+        const ratio = newScale / gesture.zoom.k;
+        const [middleX, middleY] = gesture.middle;
+        setZoom({ k: newScale, x: middleX - (middleX - gesture.zoom.x) * ratio, y: middleY - (middleY - gesture.zoom.y) * ratio });
+      }
+    });
+    const endPointer = (event) => {
+      // A release far from the press counts as a drag even if no move events arrived in between.
+      if (event.type === 'pointerup' && gesture && gesture.kind === 'drag') dragTo(event.clientX, event.clientY, event.pointerId);
+      pointers.delete(event.pointerId);
+      gesture = null;
+      if (pointers.size) startGesture();   // pinch -> one finger left: continue as a drag
+    };
+    svg.addEventListener('pointerup', endPointer);
+    svg.addEventListener('pointercancel', endPointer);
+    // After a drag, swallow the click so the ward under the pointer isn't selected.
+    svg.addEventListener('click', (event) => { if (dragged) { event.stopPropagation(); dragged = false; } }, true);
   }
 
   function pathData(geometry, toScreen) {
@@ -589,8 +801,9 @@
   // transparent hit area drawn first; points sit above it so they can be hovered.
   // Esri tiles covering the map's bounding box, each placed by its corners (this page's projection is
   // Web Mercator in degrees, the same as the tiles', so tiles are plain rectangles).
-  function drawStreetTiles(svg, toScreen, bounds) {
-    const tileCount = 2 ** STREET_MAP_TILE_ZOOM;
+  function drawStreetTiles(svg, toScreen, bounds, tileZoom = STREET_MAP_TILE_ZOOM, groupClass = 'cc-tiles-base') {
+    const group = svgEl('g', { class: groupClass });
+    const tileCount = 2 ** tileZoom;
     const tileX = (longitude) => Math.floor(((longitude + 180) / 360) * tileCount);
     const tileY = (mercatorDegrees) => Math.floor(((1 - mercatorDegrees / 180) / 2) * tileCount);
     const cornerLongitude = (x) => (x / tileCount) * 360 - 180;
@@ -599,12 +812,14 @@
       for (let y = tileY(bounds.maxY); y <= tileY(bounds.minY); y += 1) {
         const [left, top] = toScreen([cornerLongitude(x), cornerMercator(y)]);
         const [right, bottom] = toScreen([cornerLongitude(x + 1), cornerMercator(y + 1)]);
-        svg.append(svgEl('image', { href: STREET_MAP_TILE_URL.replace('{z}', STREET_MAP_TILE_ZOOM).replace('{x}', x).replace('{y}', y),
+        group.append(svgEl('image', { href: STREET_MAP_TILE_URL.replace('{z}', tileZoom).replace('{x}', x).replace('{y}', y),
           x: left.toFixed(2), y: top.toFixed(2),
           width: (right - left + STREET_MAP_TILE_SEAM_OVERLAP).toFixed(2), height: (bottom - top + STREET_MAP_TILE_SEAM_OVERLAP).toFixed(2),
           preserveAspectRatio: 'none', class: 'cc-layer-shape' }));
       }
     }
+    svg.append(group);
+    return group;
   }
 
   function drawLayerMap(svg, projected, toScreen, scale, bounds) {
@@ -618,7 +833,10 @@
     const layerInfo = data.meta.layers.by_layer[state.layer];
     const collection = data.layers[state.layer];
 
-    if (isStreetMap) drawStreetTiles(svg, toScreen, bounds);
+    if (isStreetMap) {
+      drawStreetTiles(svg, toScreen, bounds);
+      svg.append(svgEl('g', { class: 'cc-tiles-detail' }));   // filled by loadDetailTiles after zooming
+    }
     // 1. Ward hit areas (transparent; on the street map, filled by neighbor color).
     projected.forEach((shape) => {
       const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
@@ -651,22 +869,26 @@
         if (layerInfo.kind === 'fill') {
           svg.append(svgEl('path', { d: pathData(feature.geometry, toScreen), class: 'cc-layer-shape', 'fill-rule': 'evenodd',
             fill: style.fill_palette[properties.color_index % style.fill_palette.length], 'fill-opacity': style.fill_opacity,
-            stroke: style.fill_edge_color, 'stroke-width': (style.fill_edge_points * markUnits).toFixed(2) }));
+            stroke: style.fill_edge_color, 'stroke-width': (style.fill_edge_points * markUnits).toFixed(2),
+            'data-base-stroke': (style.fill_edge_points * markUnits).toFixed(2) }));
         } else if (layerInfo.kind === 'single') {
           // matplotlib's alpha applies to fill and edge alike.
           svg.append(svgEl('path', { d: pathData(feature.geometry, toScreen), class: 'cc-layer-shape', 'fill-rule': 'evenodd',
             fill: style.single_fill_color, stroke: style.single_fill_color, opacity: style.single_opacity,
-            'stroke-width': (style.single_edge_points * markUnits).toFixed(2) }));
+            'stroke-width': (style.single_edge_points * markUnits).toFixed(2),
+            'data-base-stroke': (style.single_edge_points * markUnits).toFixed(2) }));
         } else if (layerInfo.kind === 'line') {
           svg.append(svgEl('path', { d: lineData(feature.geometry, toScreen), class: 'cc-layer-shape', fill: 'none',
-            stroke: style.line_color, 'stroke-width': (style.line_points * markUnits).toFixed(2), 'stroke-linejoin': 'round' }));
+            stroke: style.line_color, 'stroke-width': (style.line_points * markUnits).toFixed(2), 'stroke-linejoin': 'round',
+            'data-base-stroke': (style.line_points * markUnits).toFixed(2) }));
         } else if (layerInfo.kind === 'point') {
           const [pointX, pointY] = toScreen(project(feature.geometry.coordinates));
           // markersize is the marker's area in points^2, so its diameter is the square root.
           const radius = (Math.sqrt(style.point_area_points2) / 2) * pointUnits;
           const circle = svgEl('circle', { cx: pointX.toFixed(1), cy: pointY.toFixed(1), r: radius.toFixed(2),
             class: 'cc-layer-point', fill: style.point_color, stroke: style.point_edge_color,
-            'stroke-width': (style.point_edge_points * pointUnits).toFixed(2) });
+            'stroke-width': (style.point_edge_points * pointUnits).toFixed(2),
+            'data-anchor-x': pointX.toFixed(1), 'data-anchor-y': pointY.toFixed(1) });
           circle.addEventListener('mousemove', (event) => showLayerTooltip(properties, event));
           circle.addEventListener('mouseleave', hideTooltip);
           svg.append(circle);
@@ -678,7 +900,7 @@
           const [labelX, labelY] = toScreen(project([feature.properties.label_lon, feature.properties.label_lat]));
           const text = svgEl('text', { x: labelX.toFixed(1), y: labelY.toFixed(1), class: 'cc-layer-label',
             'font-size': (style.label_font_points * labelUnits).toFixed(2), fill: style.label_color,
-            'stroke-width': haloWidth.toFixed(2) });
+            'stroke-width': haloWidth.toFixed(2), 'data-anchor-x': labelX.toFixed(1), 'data-anchor-y': labelY.toFixed(1) });
           text.textContent = feature.properties.label;
           svg.append(text);
         });
@@ -689,12 +911,14 @@
     projected.forEach((shape) => {
       const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
       svg.append(svgEl('path', { d: pathText, class: 'cc-ward-outline', fill: 'none', stroke: '#000',
-        'stroke-width': (style.ward_outline_points * markUnits).toFixed(2), 'stroke-linejoin': 'round' }));
+        'stroke-width': (style.ward_outline_points * markUnits).toFixed(2), 'stroke-linejoin': 'round',
+        'data-base-stroke': (style.ward_outline_points * markUnits).toFixed(2) }));
     });
     projected.forEach((shape) => {
       const [numberX, numberY] = toScreen(shape.labels.ward_number);
       const text = svgEl('text', { x: numberX.toFixed(1), y: numberY.toFixed(1), class: 'cc-ward-number',
-        'font-size': (style.ward_number_font_points * labelUnits).toFixed(2), 'stroke-width': haloWidth.toFixed(2) });
+        'font-size': (style.ward_number_font_points * labelUnits).toFixed(2), 'stroke-width': haloWidth.toFixed(2),
+        'data-anchor-x': numberX.toFixed(1), 'data-anchor-y': numberY.toFixed(1) });
       text.textContent = String(Number(shape.ward));   // the notebook prints the layer's unpadded ward
       svg.append(text);
     });
@@ -711,8 +935,9 @@
     // Points on the notebook figure -> this SVG's units.
     const unitsPerPoint = labelMeta.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale * REAL_MAP_LABEL_SCALE;
     const haloWidth = labelMeta.halo_points * unitsPerPoint;
-    function addText(x, y, content, fontPoints, baseline) {
+    function addText(x, y, content, fontPoints, baseline, anchor) {
       const text = svgEl('text', { x: x.toFixed(1), y: y.toFixed(1), class: 'cc-label cc-label-notebook',
+                                   'data-anchor-x': anchor[0].toFixed(1), 'data-anchor-y': anchor[1].toFixed(1),
                                    'font-size': (fontPoints * unitsPerPoint).toFixed(2),
                                    'stroke-width': haloWidth.toFixed(2),
                                    style: `dominant-baseline:${baseline}` });   // inline: the .cc-label CSS would override an attribute
@@ -726,12 +951,12 @@
       if (layout.kind === 'one_block') {
         const fontPoints = layout.font_points[0];
         const lineStep = fontPoints * unitsPerPoint * NOTEBOOK_LINE_SPACING;
-        addText(anchorX, anchorY - lineStep / 2, wardNumber, fontPoints, 'central');
-        addText(anchorX, anchorY + lineStep / 2, alder.label_name, fontPoints, 'central');
+        addText(anchorX, anchorY - lineStep / 2, wardNumber, fontPoints, 'central', [anchorX, anchorY]);
+        addText(anchorX, anchorY + lineStep / 2, alder.label_name, fontPoints, 'central', [anchorX, anchorY]);
       } else {
         const [nameFontPoints, valueFontPoints] = layout.font_points;
-        addText(anchorX, anchorY, `${wardNumber} ${alder.label_name}`, nameFontPoints, 'text-after-edge');
-        addText(anchorX, anchorY, notebookValueText(shape.ward), valueFontPoints, 'text-before-edge');
+        addText(anchorX, anchorY, `${wardNumber} ${alder.label_name}`, nameFontPoints, 'text-after-edge', [anchorX, anchorY]);
+        addText(anchorX, anchorY, notebookValueText(shape.ward), valueFontPoints, 'text-before-edge', [anchorX, anchorY]);
       }
     });
   }
