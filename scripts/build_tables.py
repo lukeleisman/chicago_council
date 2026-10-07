@@ -18,19 +18,23 @@ Tables (reviewed in notebooks/tables_review.ipynb section 2):
   member_votes  one row per vote_event x roster row
   attachments   one row per eLMS item file x entry in its `attachments` list (added 2026-10-05;
                 items with no attachments, 153 today, have no rows)
+  committee_members  one row per eLMS body (body_list.json) x entry in its `members` list (added
+                2026-10-07; every body and every member row, active or not, including the Mayor's
+                office and City Council)
 
 How they link:
   member_votes.event_id -> vote_events.event_id
   member_votes.person_id, attendance.person_id -> people.person_id
   vote_events.meeting_id, attendance.meeting_id -> meetings.meeting_id
   attachments.matter_id -> vote_events.matter_id (many events can share one matter)
+  committee_members.person_id -> people.person_id
 
 Not in eLMS, so not in any table: the 9 matters in KNOWN_DELETED_MATTER_IDS
 (scripts/fetch_elms.py), which exist only in DataMade.
 
 Usage:
   python scripts/build_tables.py all        # every table, in dependency order
-  python scripts/build_tables.py people     # one table (also: meetings, attendance, vote_events, member_votes, attachments)
+  python scripts/build_tables.py people     # one table (also: meetings, attendance, vote_events, member_votes, attachments, committee_members)
 """
 
 import hashlib
@@ -314,6 +318,48 @@ def build_attachments():
     return attachments
 
 
+def build_committee_members():
+    """One row per entry in each eLMS body's `members` list (data/raw/elms/body_list.json, fetched by
+    scripts/fetch_elms.py lists). Every body and every member row is kept, active or not; which rows
+    count as current committee assignments is decided in scripts/council_metrics.py.
+
+    Columns (all eLMS values as recorded unless noted):
+      body_id, body_name, body_type, body_abbreviation   eLMS bodyId, body, bodyType, bodyAbbreviation
+      body_is_active, body_last_publication              eLMS body isActive, lastPublicationDate (raw UTC)
+      member_position          1-based position in eLMS's members list
+      person_id                eLMS personId (no placeholder IDs in this file today; the build stops if one appears)
+      display_name             eLMS displayName, leading/trailing whitespace stripped (same rule as people)
+      display_name_raw         eLMS displayName as recorded
+      member_ward              eLMS member `ward` as recorded ("01", "Mayor", ...)
+      member_type              eLMS memberType as recorded ("Member", "Chair", "Vice Chair", "Mayor", ...; can be blank)
+      start_date, end_date     eLMS startDate / endDate as a Chicago calendar date (LOCAL_TIMEZONE)
+      start_date_raw, end_date_raw   as recorded (UTC timestamps)
+      member_is_active         eLMS member isActive
+    """
+    bodies = json.loads((ELMS_DIR / "body_list.json").read_text())["data"]
+    rows = []
+    for body in bodies:
+        for position, member in enumerate(body.get("members") or [], start=1):
+            rows.append({
+                "body_id": body["bodyId"], "body_name": body["body"], "body_type": body["bodyType"],
+                "body_abbreviation": body["bodyAbbreviation"], "body_is_active": body["isActive"],
+                "body_last_publication": body["lastPublicationDate"],
+                "member_position": position, "person_id": member["personId"],
+                "display_name": member["displayName"].strip(), "display_name_raw": member["displayName"],
+                "member_ward": member["ward"], "member_type": member["memberType"],
+                "start_date_raw": member["startDate"], "end_date_raw": member["endDate"],
+                "member_is_active": member["isActive"],
+            })
+    members = pd.DataFrame(rows)
+    members.insert(members.columns.get_loc("start_date_raw"), "start_date", to_local_date(members.start_date_raw))
+    members.insert(members.columns.get_loc("start_date_raw"), "end_date", to_local_date(members.end_date_raw))
+    # Checks: every raw member row has a row; no placeholder IDs (decision 1.7 would need a name table here).
+    assert len(members) == sum(len(body.get("members") or []) for body in bodies)
+    assert not (members.person_id == PLACEHOLDER_PERSON_ID).any(), "placeholder personId in body_list.json: add a rule"
+    assert not members.duplicated(["body_id", "member_position"]).any()
+    return members
+
+
 def assign_roster_kind(row):
     """ROSTER_KIND_RULES, first match wins (mirrors tables_review §1.4d)."""
     text = (row.action_text or "").lower()
@@ -536,6 +582,7 @@ STEPS = {
     "meetings": build_meetings,
     "people": build_people,
     "attachments": build_attachments,
+    "committee_members": build_committee_members,
 }
 
 if __name__ == "__main__":

@@ -148,6 +148,91 @@ ABSENCE_LABEL_OFFSETS_BY_VALUE = {
 }
 
 # ---------------------------------------------------------------------------
+# Committee maps (notebooks/ward_views.ipynb §5 and the dashboard's Alders > Committees view; added
+# 2026-10-07). Which assignments are current: scripts/council_metrics.py (COMMITTEE_BODY_TYPES,
+# CURRENT_COMMITTEE_RULE). Everything below is display only.
+# ---------------------------------------------------------------------------
+
+# Fill colors for the "All committee chairs" view: one color per committee, in committee order
+# (council_metrics: body type, then name A-Z). User, 2026-10-07: "a more expansive palette" (22
+# committees). Options, the first 22 colors of each, copied as hex so no extra package is needed:
+#   "glasbey_light" = colorcet 3.0.1 glasbey_light (Glasbey et al. 2007: colors picked to be as far
+#                     apart as possible; the "light" set leaves out dark colors, so black labels stay readable)
+#   "glasbey"       = colorcet 3.0.1 glasbey (same method, includes dark colors)
+#   "tab20_plus"    = matplotlib tab20 (10 strong, then their 10 light versions) + 2 from tab20b
+# No 22-color set keeps every pair apart for color-blind readers; the short label on each ward carries
+# the committee's identity, the color helps. ward_views §5.3 draws every option.
+COMMITTEE_PALETTE_OPTIONS = {
+    "glasbey_light": ["#d60000", "#018700", "#b500ff", "#05acc6", "#97ff00", "#ffa52f", "#ff8ec8", "#79525e",
+                      "#00fdcf", "#afa5ff", "#93ac83", "#9a6900", "#366962", "#d3008c", "#fdf490", "#c86e66",
+                      "#9ee2ff", "#00c846", "#a877ac", "#b8ba01", "#f4bfb1", "#ff28fd"],
+    "glasbey": ["#d60000", "#8c3bff", "#018700", "#00acc6", "#97ff00", "#ff7ed1", "#6b004f", "#ffa52f",
+                "#573b00", "#005659", "#0000dd", "#00fdcf", "#a17569", "#bcb6ff", "#95b577", "#bf03b8",
+                "#645474", "#790000", "#0774d8", "#fdf490", "#004b00", "#8e7900"],
+    "tab20_plus": ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+                   "#bcbd22", "#17becf", "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5", "#c49c94",
+                   "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5", "#393b79", "#e7cb94"],
+}
+COMMITTEE_PALETTE = "glasbey_light"   # my pick for the first draft (lightest of the three); not chosen by the user
+COMMITTEE_FILL_OPACITY = 0.85         # same as the tenure / absence / vote maps
+# Wards not colored in a view (non-chairs on the chairs view, non-members on a one-committee view).
+COMMITTEE_UNCOLORED_FILL = "#ffffff"
+
+# Which committees get a color on the overview maps below (eLMS bodyType). User, 2026-10-07: leave the
+# joint committees out ("the correct call"): each joint committee's chairs and vice chairs are the chairs
+# and vice chairs of the two committees it joins (all 19 checked in ward_views §5.1).
+CHAIRS_VIEW_BODY_TYPES = ["Committee", "Sub-Committee"]
+
+# Overview maps: dropdown entries above the single committees (user, 2026-10-07), in this order; the first
+# is the default (user: chairs). Each colors a ward by the CHAIRS_VIEW_BODY_TYPES committees on which its
+# alder holds one of `roles`.
+#   committee_line = the short committee label as a third label line (user: none on the combined map,
+#                    "labels would get too crowded"; it shows colors / stripes and the names only)
+OVERVIEW_VIEWS = {
+    "all_chairs": {"label": "All committee chairs", "roles": ["Chair"], "committee_line": True},
+    "all_vice_chairs": {"label": "All committee vice chairs", "roles": ["Vice Chair"], "committee_line": True},
+    "all_chairs_and_vice_chairs": {"label": "All chairs and vice chairs", "roles": ["Chair", "Vice Chair"],
+                                   "committee_line": False},
+}
+# A ward with more than one colored role (today: 9 wards on the combined map, a chair and a vice chair
+# each; nobody chairs two, nobody vice-chairs two): 45° stripes, one per committee color, each this wide
+# (points on the FIGURE_SIZE_MAP figure; the dashboard converts). Chair stripe first.
+MULTI_CHAIR_STRIPE_POINTS = 4
+# Vice chair fill on the combined map (ward_views §5.3 draws both):
+#   "same"    = the committee's color, as for the chair (role shown only by ★ bold / ☆ italic)
+#   "lighter" = the committee's color at VICE_CHAIR_LIGHTER_OPACITY_FACTOR x COMMITTEE_FILL_OPACITY
+# My pick for the first draft: "same"; not chosen by the user.
+COMBINED_VIEW_VICE_CHAIR_FILL = "same"
+VICE_CHAIR_LIGHTER_OPACITY_FACTOR = 0.4
+
+# One-committee view fill (any committee from the dropdown):
+#   "committee_color" = the committee's color from the chairs view (joint committees, which have none,
+#                       get COMMITTEE_MEMBER_FALLBACK_FILL)
+#   "fixed"           = COMMITTEE_MEMBER_FALLBACK_FILL for every committee
+COMMITTEE_VIEW_FILL = "committee_color"
+COMMITTEE_MEMBER_FALLBACK_FILL = "#2a78d6"   # blue
+
+# Committee names shown (legend, hover, dropdown):
+#   "collapse_spaces" = eLMS body name with runs of spaces made single ("Joint Committee:   Finance; Aviation"
+#                       -> "Joint Committee: Finance; Aviation")
+#   "as_recorded"     = eLMS body name unchanged
+COMMITTEE_NAME_DISPLAY = "collapse_spaces"
+# Short label on the map: eLMS bodyAbbreviation ("Zoning", "Budget", "Rules", "Traffic", ...), except
+# these, {eLMS body name: short label}. My picks (2026-10-07), shorter for the map; not chosen by the user.
+COMMITTEE_SHORT_LABEL_OVERRIDES = {
+    "Committee on Finance: Subcommittee on Revenue": "Revenue",                            # eLMS: "Subcommittee on Revenue"
+    "Committee on Workforce Development: Subcommittee on Youth Employment": "Youth Employment",  # eLMS: "Subcommittee on Youth Employment"
+}
+
+# Role marks (user, 2026-10-07: stars; bold chair, italic vice chair). Mark goes after the last name.
+CHAIR_MARK = "\u2605"           # ★
+VICE_CHAIR_MARK = "\u2606"      # ☆
+CHAIR_FONT_WEIGHT = "bold"
+VICE_CHAIR_FONT_STYLE = "italic"
+# Overview maps mark the roles of that map (an alder with both on the combined map: "★ ☆", bold italic);
+# one-committee maps mark the role on that committee.
+
+# ---------------------------------------------------------------------------
 
 
 def load_ward_shapes(map_shapes="real", layers_dir=LAYERS_DIR):
@@ -267,3 +352,111 @@ def add_basemap(axis, basemap_choice):
     tiles = BASEMAP_OPTIONS[basemap_choice]
     if tiles is not None:
         contextily.add_basemap(axis, source=tiles, crs=PLOT_CRS)
+
+
+def committee_display_table(assignments, palette=COMMITTEE_PALETTE, chairs_view_body_types=CHAIRS_VIEW_BODY_TYPES,
+                            name_display=COMMITTEE_NAME_DISPLAY):
+    """One row per committee in `assignments` (council_metrics.current_committee_assignments), in
+    committee_order: body_id, body_type, body_name (as recorded), name (COMMITTEE_NAME_DISPLAY),
+    short_label, in_chairs_view, color (palette color, in order, for chairs-view committees; None
+    otherwise), chair_wards, vice_chair_wards, member_count (every role)."""
+    committees = (assignments.sort_values("committee_order").drop_duplicates("body_id")
+                  [["body_id", "body_type", "body_name", "body_abbreviation", "committee_order"]].reset_index(drop=True))
+    if name_display == "collapse_spaces":
+        committees["name"] = committees.body_name.str.split().str.join(" ")
+    elif name_display == "as_recorded":
+        committees["name"] = committees.body_name
+    else:
+        raise ValueError(name_display)
+    committees["short_label"] = [COMMITTEE_SHORT_LABEL_OVERRIDES.get(body_name, abbreviation)
+                                 for body_name, abbreviation in zip(committees.body_name, committees.body_abbreviation)]
+    committees["in_chairs_view"] = committees.body_type.isin(chairs_view_body_types)
+    colors = COMMITTEE_PALETTE_OPTIONS[palette]
+    chairs_view_count = int(committees.in_chairs_view.sum())
+    assert chairs_view_count <= len(colors), f"{chairs_view_count} committees, palette {palette} has {len(colors)} colors"
+    committees["color"] = None
+    committees.loc[committees.in_chairs_view, "color"] = colors[:chairs_view_count]
+    wards_by_role = assignments.groupby(["body_id", "member_type"]).ward.apply(sorted)
+    committees["chair_wards"] = [wards_by_role.get((body_id, "Chair"), []) for body_id in committees.body_id]
+    committees["vice_chair_wards"] = [wards_by_role.get((body_id, "Vice Chair"), []) for body_id in committees.body_id]
+    committees["member_count"] = committees.body_id.map(assignments.body_id.value_counts())
+    return committees
+
+
+def name_with_role_mark(label_name, roles):
+    """Last name plus CHAIR_MARK and/or VICE_CHAIR_MARK. roles: a list of eLMS memberType values (or empty)."""
+    marks = [mark for role, mark in [("Chair", CHAIR_MARK), ("Vice Chair", VICE_CHAIR_MARK)] if role in roles]
+    return " ".join([label_name, *marks])
+
+
+def role_font(roles):
+    """matplotlib font keywords for a name line: bold chair, italic vice chair (both: bold italic)."""
+    font = {}
+    if "Chair" in roles:
+        font["fontweight"] = CHAIR_FONT_WEIGHT
+    if "Vice Chair" in roles:
+        font["fontstyle"] = VICE_CHAIR_FONT_STYLE
+    return font
+
+
+def overview_by_ward(assignments, committees, view):
+    """One overview map (OVERVIEW_VIEWS key): {ward: {"fills": [{"color", "opacity"}, ...], "roles": [...],
+    "short_labels": [...]}} for wards with at least one colored role, chair roles first, then committee order.
+    committees = committee_display_table(assignments). The dashboard gets this same dict (committees.json)."""
+    roles = OVERVIEW_VIEWS[view]["roles"]
+    colored = committees[committees.in_chairs_view].set_index("body_id")
+    rows = assignments[assignments.body_id.isin(colored.index) & assignments.member_type.isin(roles)].copy()
+    rows["role_order"] = rows.member_type.map({role: position for position, role in enumerate(roles)})
+    by_ward = {}
+    for row in rows.sort_values(["ward", "role_order", "committee_order"]).itertuples():
+        committee = colored.loc[row.body_id]
+        opacity = COMMITTEE_FILL_OPACITY
+        if len(roles) > 1 and row.member_type == "Vice Chair" and COMBINED_VIEW_VICE_CHAIR_FILL == "lighter":
+            opacity = COMMITTEE_FILL_OPACITY * VICE_CHAIR_LIGHTER_OPACITY_FACTOR
+        elif COMBINED_VIEW_VICE_CHAIR_FILL not in ("same", "lighter"):
+            raise ValueError(COMBINED_VIEW_VICE_CHAIR_FILL)
+        entry = by_ward.setdefault(row.ward, {"fills": [], "roles": [], "short_labels": []})
+        entry["fills"].append({"color": committee.color, "opacity": opacity})
+        if row.member_type not in entry["roles"]:
+            entry["roles"].append(row.member_type)
+        entry["short_labels"].append(committee.short_label)
+    return by_ward
+
+
+def draw_ward_line_labels(axis, wards, lines_by_ward, font_size, offset_points_by_ward=None, line_spacing=1.2):
+    """Several lines per ward, each with its own font keywords, the block centered on the anchor
+    (representative point moved by offset_points_by_ward, as draw_ward_labels).
+
+    lines_by_ward: {ward: [(text, {matplotlib font keywords}), ...]}.
+    Returns {ward: [annotation, ...]}; label_overlaps() treats each ward's lines as one box."""
+    offset_points_by_ward = offset_points_by_ward or {}
+    annotations_by_ward = {}
+    for ward, label_point in zip(wards["ward"], wards.representative_point()):
+        right, up = offset_points_by_ward.get(ward, (0, 0))
+        lines = lines_by_ward[ward]
+        annotations_by_ward[ward] = []
+        for line_number, (line_text, font_keywords) in enumerate(lines):
+            line_up = ((len(lines) - 1) / 2 - line_number) * font_size * line_spacing
+            annotations_by_ward[ward].append(axis.annotate(
+                line_text, (label_point.x, label_point.y), xytext=(right, up + line_up), textcoords="offset points",
+                fontsize=font_size, ha="center", va="center", path_effects=TEXT_HALO, annotation_clip=True,
+                **font_keywords))
+    return annotations_by_ward
+
+
+def stripe_pieces(geometry, colors, stripe_width_meters):
+    """Cut one ward shape into diagonal (45°) stripes, colors repeating in order. Returns
+    [(piece, color)], for a ward with more than one fill color (MULTI_CHAIR_STRIPE_POINTS)."""
+    from shapely.affinity import rotate
+    from shapely.geometry import box
+    min_x, min_y, max_x, max_y = geometry.bounds
+    center = ((min_x + max_x) / 2, (min_y + max_y) / 2)
+    reach = max(max_x - min_x, max_y - min_y)
+    pieces = []
+    for stripe_number, left in enumerate(range(0, int(2 * reach / stripe_width_meters) + 1)):
+        x0 = center[0] - reach + left * stripe_width_meters
+        band = rotate(box(x0, center[1] - reach, x0 + stripe_width_meters, center[1] + reach), 45, origin=center)
+        piece = geometry.intersection(band)
+        if not piece.is_empty:
+            pieces.append((piece, colors[stripe_number % len(colors)]))
+    return pieces

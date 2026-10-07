@@ -6,6 +6,7 @@ same numbers from the same code:
   current_alders()          <- ward_views §1.1 (current alder per ward, label name)
   absence_*()               <- ward_views §3.1-§3.2 (decision 1.4; same computation as tables_review §2.6)
   split_event_steps()       <- ward_views §4.1 (decision 1.5 plus the user's 2026-10-05 filters)
+  current_committee_assignments()  ward_views §5 (added 2026-10-07; committee maps)
 
 Every rule is a named constant below, with who decided it and when. The notebook shows the
 evidence for each (excluded event, counts at each filter step, cross-checks).
@@ -55,6 +56,22 @@ SPLIT_MIN_NAY = 1
 SPLIT_ACTION_BY = "City Council"            # vote_events.action_by
 SPLIT_ROSTER_KINDS = ["roll call"]          # vote_events.roster_kind
 
+# --- Committee assignments (ward_views §5; added 2026-10-07) ---
+# Source (user, 2026-10-07): eLMS only (committee_members table, from body_list.json). DataMade's
+# membership table has the same counts by role today but is not used.
+# Which bodies count (user, 2026-10-07: keep the subcommittees and the joint committees). eLMS bodyType values.
+COMMITTEE_BODY_TYPES = ["Committee", "Sub-Committee", "Joint Committee"]
+# Current assignments only (user, 2026-10-07). Which rows are "current":
+#   "elms_is_active"     = body isActive AND member isActive (eLMS's own flags)
+#   "end_date_after"     = body isActive AND member end_date after COMMITTEE_AS_OF_DATE
+#   "both"               = both of the above
+# OPEN QUESTION: 3 member rows are active in eLMS but their end date has passed (Quezada, Reilly and
+# Conway on three joint committees; listed in ward_views §5.1). "elms_is_active" keeps them.
+CURRENT_COMMITTEE_RULE = "elms_is_active"
+COMMITTEE_AS_OF_DATE = "2026-10-04"          # same as build_tables.AS_OF_DATE
+# Order of committees (dropdown order, color order): by body type in COMMITTEE_BODY_TYPES order,
+# then by eLMS body name A-Z.
+
 # ---------------------------------------------------------------------------
 
 
@@ -68,6 +85,7 @@ def load_tables(tables_dir=TABLES_DIR):
         "member_votes": pd.read_csv(tables_dir / "member_votes.csv"),
         "attendance": pd.read_csv(tables_dir / "attendance.csv"),
         "attachments": pd.read_csv(tables_dir / "attachments.csv"),
+        "committee_members": pd.read_csv(tables_dir / "committee_members.csv", dtype={"member_ward": str}),
     }
 
 
@@ -137,3 +155,33 @@ def split_event_steps(vote_events):
     split_step_council = split_step_all[split_step_all.action_by == SPLIT_ACTION_BY]
     split_events = split_step_council[split_step_council.roster_kind.isin(SPLIT_ROSTER_KINDS)].copy()
     return split_step_all, split_step_council, split_events
+
+
+def current_committee_assignments(committee_members, alders, rule=CURRENT_COMMITTEE_RULE,
+                                  body_types=COMMITTEE_BODY_TYPES, as_of_date=COMMITTEE_AS_OF_DATE):
+    """committee_members rows that are current assignments (rule above) on COMMITTEE_BODY_TYPES bodies,
+    joined to `alders` (needs person_id, ward). Adds committee_order (0, 1, ... in the order above).
+
+    Returns (assignments, not_current_alders): rows whose person is a current alder, and rows whose
+    person is not (expected empty; shown in ward_views §5.1, never dropped silently)."""
+    is_committee = committee_members.body_type.isin(body_types) & committee_members.body_is_active
+    if rule == "elms_is_active":
+        is_current = committee_members.member_is_active
+    elif rule == "end_date_after":
+        is_current = committee_members.end_date > as_of_date
+    elif rule == "both":
+        is_current = committee_members.member_is_active & (committee_members.end_date > as_of_date)
+    else:
+        raise ValueError(rule)
+    rows = committee_members[is_committee & is_current].copy()
+
+    bodies = rows.drop_duplicates("body_id")[["body_id", "body_type", "body_name"]].copy()
+    bodies["type_order"] = bodies.body_type.map({body_type: position for position, body_type in enumerate(body_types)})
+    bodies = bodies.sort_values(["type_order", "body_name"]).reset_index(drop=True)
+    rows["committee_order"] = rows.body_id.map(dict(zip(bodies.body_id, bodies.index)))
+
+    ward_by_person = dict(zip(alders.person_id, alders.ward))
+    rows["ward"] = rows.person_id.map(ward_by_person)
+    not_current_alders = rows[rows.ward.isna()]
+    assignments = rows[rows.ward.notna()].sort_values(["committee_order", "ward"]).reset_index(drop=True)
+    return assignments, not_current_alders

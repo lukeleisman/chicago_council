@@ -12,6 +12,8 @@ Files written (all small; sizes printed at the end):
   split_events.json      one record per kept split event: tallies, each current alder's vote, attachments
   meta.json              when exported, and every rule/setting behind the numbers (shown on the page)
   layer_<name>.geojson   Wards tab overlays (DASHBOARD_LAYERS), styled by scripts/map_layers.py
+  committees.json        Alders tab "Committees" view: every current committee (council_metrics rules,
+                         ward_maps display settings) and each ward's assignments (added 2026-10-07)
 
 Usage:
   python scripts/export_dashboard_data.py
@@ -434,6 +436,46 @@ def export_alders_and_votes():
     return default_event[0]["event_id"], len(counted_events), alder_records
 
 
+def export_committees(alder_records):
+    """committees.json: the same committee table ward_views §5 draws (council_metrics.current_committee_assignments,
+    ward_maps.committee_display_table), plus each ward's assignments in committee order."""
+    tables = council_metrics.load_tables()
+    alders = pd.DataFrame(alder_records)[["person_id", "ward"]]
+    assignments, not_current_alders = council_metrics.current_committee_assignments(tables["committee_members"], alders)
+    assert not_current_alders.empty, "current committee rows for people who are not current alders: see ward_views §5.1"
+    committees = ward_maps.committee_display_table(assignments)
+    committee_records = [{
+        "body_id": row.body_id, "body_type": row.body_type, "name": row.name, "short_label": row.short_label,
+        "in_chairs_view": bool(row.in_chairs_view), "color": row.color,
+        "chair_wards": row.chair_wards, "vice_chair_wards": row.vice_chair_wards, "member_count": int(row.member_count),
+    } for row in committees.itertuples()]
+    # {ward: [[committee index in `committees`, eLMS memberType], ...]} in committee order (index, not
+    # body_id, keeps the file small).
+    by_ward = {ward: [[int(order), role] for order, role in zip(rows.committee_order, rows.member_type)]
+               for ward, rows in assignments.sort_values("committee_order").groupby("ward")}
+    assert list(committees.committee_order) == list(range(len(committees))), "committee_order must be 0..n-1"
+    write_json({
+        "rules": {"body_types": council_metrics.COMMITTEE_BODY_TYPES,
+                  "current_rule": council_metrics.CURRENT_COMMITTEE_RULE,
+                  "chairs_view_body_types": ward_maps.CHAIRS_VIEW_BODY_TYPES,
+                  "palette": ward_maps.COMMITTEE_PALETTE},
+        "style": {"fill_opacity": ward_maps.COMMITTEE_FILL_OPACITY, "uncolored_fill": ward_maps.COMMITTEE_UNCOLORED_FILL,
+                  "view_fill": ward_maps.COMMITTEE_VIEW_FILL, "member_fallback_fill": ward_maps.COMMITTEE_MEMBER_FALLBACK_FILL,
+                  "multi_chair_stripe_points": ward_maps.MULTI_CHAIR_STRIPE_POINTS,
+                  "combined_view_vice_chair_fill": ward_maps.COMBINED_VIEW_VICE_CHAIR_FILL,
+                  "chair_mark": ward_maps.CHAIR_MARK, "vice_chair_mark": ward_maps.VICE_CHAIR_MARK,
+                  "chair_font_weight": ward_maps.CHAIR_FONT_WEIGHT, "vice_chair_font_style": ward_maps.VICE_CHAIR_FONT_STYLE},
+        "committees": committee_records,
+        "by_ward": by_ward,
+        # Overview maps, in dropdown order (first = default): ward_maps.OVERVIEW_VIEWS and overview_by_ward.
+        "overviews": [{"key": key, "label": view["label"], "roles": view["roles"], "committee_line": view["committee_line"],
+                       "by_ward": ward_maps.overview_by_ward(assignments, committees, key)}
+                      for key, view in ward_maps.OVERVIEW_VIEWS.items()],
+    }, "committees.json")
+    print(f"committees: {len(committee_records)} ({sum(record['in_chairs_view'] for record in committee_records)} "
+          f"in the chairs view); assignment rows {len(assignments)}")
+
+
 def export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta):
     # ABOUT_TEXT states these rule values in words; stop if a rule no longer matches the sentence.
     assert council_metrics.SPLIT_MIN_NAY == 1, "ABOUT_TEXT says 'at least one Nay vote'"
@@ -504,6 +546,7 @@ def export_meta(default_event_id, counted_event_count, meters_per_point, layer_m
 if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     default_event_id, counted_event_count, alder_records = export_alders_and_votes()
+    export_committees(alder_records)
     labels_by_ward, meters_per_point = real_map_label_layout(alder_records)
     export_shapes(labels_by_ward)
     # The layer sizes in points reuse meters_per_point, measured on FIGURE_SIZE_MAP.

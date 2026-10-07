@@ -100,8 +100,26 @@
     { key: 'names', label: 'Names' },
     { key: 'tenure', label: 'Tenure' },
     { key: 'absence', label: 'Absence' },
+    { key: 'committees', label: 'Committees' },   // user, 2026-10-07
   ];
   const DEFAULT_ALDER_MEASURE = 'names';
+  // Committees (user, 2026-10-07): a second dropdown picks "All committee chairs" (the default) or one
+  // committee. Data and every display rule: docs/data/committees.json, written by
+  // scripts/export_dashboard_data.py from scripts/council_metrics.py (which assignments are current)
+  // and scripts/ward_maps.py (colors, short labels, stars, bold/italic), the same code ward_views §5 uses.
+  // Overview entries ("All committee chairs", "All committee vice chairs", "All chairs and vice chairs") come
+  // from committees.json `overviews` (ward_maps.OVERVIEW_VIEWS); the first is the default (user: chairs).
+  // Dropdown groups, by eLMS body type (committee order within each: council_metrics).
+  const COMMITTEE_GROUP_LABELS = { 'Committee': 'Committees', 'Sub-Committee': 'Subcommittees', 'Joint Committee': 'Joint committees' };
+  // Role words in the hover card, table and tiles (eLMS memberType -> shown).
+  const COMMITTEE_ROLE_TEXT = { 'Chair': 'Chair', 'Vice Chair': 'Vice chair', 'Member': 'Member' };
+  // Joint committees in the hover card (an alder sits on up to 17; each joint roster looks like both
+  // committees' members together):
+  //   'count_and_roles' = the count, then only the ones the alder chairs or vice-chairs (my pick, 2026-10-07)
+  //   'all'             = every joint committee by short label
+  //   'count'           = the count only (user, 2026-10-07: joint chairs / vice chairs are those of the two
+  //                       committees joined; checked for all 19 in ward_views §5.1)
+  const TOOLTIP_JOINT_COMMITTEES = 'count';
   // Dropdown under the Wards tab: which map layer is drawn under the wards (user, 2026-10-05; no
   // precincts, no census tracts). Keys = export DASHBOARD_LAYERS; each file is fetched on first pick.
   const LAYER_OPTIONS = [
@@ -186,7 +204,8 @@
   const REAL_MAP_LABEL = 'notebook_layout';
   const REAL_MAP_NUMBER_FONT_SIZE = 22;   // map units (the map is drawn 1020 units wide, then scaled to fit)
   // Which exported label layout each view uses (export REAL_MAP_LABEL_LAYOUTS; votes = §4.7 = §1's labels).
-  const REAL_MAP_LAYOUT_BY_VIEW = { names: 'names', votes: 'names', tenure: 'tenure', absence: 'absence' };
+  // Committees use the names anchors ("ward" over "Last name"; a chair's short committee label is a third line).
+  const REAL_MAP_LAYOUT_BY_VIEW = { names: 'names', votes: 'names', tenure: 'tenure', absence: 'absence', committees: 'names' };
   // Multiplies every real-map label size. 1 = the notebook's proportions; the export's no-overlap
   // check only holds at 1. Labels scale with the map, so a narrow screen makes them small.
   // OPEN QUESTION (user, 2026-10-05: "leave as is for now", likely to return, especially for a
@@ -253,7 +272,7 @@
 #council-app .cc-seg button + button { border-left: 1px solid var(--cc-line); }
 #council-app .cc-seg button[aria-pressed="true"] { background: var(--cc-accent); color: #fff; }
 /* width/display: host themes (e.g. WordPress Jadro) stretch selects to 100% width. */
-#council-app select.cc-select { width: auto; display: inline-block; }
+#council-app select.cc-select { width: auto; display: inline-block; max-width: 100%; }
 #council-app .cc-select { font: inherit; font-size: 14px; padding: 6px 8px; border: 1px solid var(--cc-line); border-radius: 8px; background: var(--cc-surface); color: var(--cc-ink); }
 #council-app .cc-layout { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 @media (max-width: 860px) { #council-app .cc-layout { grid-template-columns: 1fr; } }
@@ -281,6 +300,8 @@
 #council-app .cc-layer-label { text-anchor: middle; dominant-baseline: central; font-style: italic; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
 #council-app .cc-ward-number { pointer-events: none; text-anchor: middle; dominant-baseline: central; font-weight: 700; fill: #000; stroke: #fff; stroke-linejoin: round; paint-order: stroke; }
 #council-app .cc-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 13px; margin-top: 8px; color: var(--cc-ink-2); }
+/* Committees legend: one committee per line (user, 2026-10-07). */
+#council-app .cc-legend-committee { flex-basis: 100%; }
 #council-app .cc-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #999; vertical-align: -2px; margin-right: 5px; }
 #council-app .cc-gradient { width: 180px; height: 12px; border-radius: 3px; border: 1px solid #999; }
 #council-app .cc-event-picker { display: flex; flex-direction: column; gap: 6px; width: 100%; }
@@ -396,6 +417,7 @@
     shapes: DEFAULT_SHAPES,
     tab: DEFAULT_TAB,
     alderMeasure: DEFAULT_ALDER_MEASURE,
+    committee: null,   // an overview key (default: the first overview, set at start) or a committee index
     layer: DEFAULT_LAYER,
     view: DEFAULT_ALDER_MEASURE,   // what is drawn: the alder measure on the Alders tab, else the tab (setTab)
     eventId: null,
@@ -405,7 +427,7 @@
     zoomByShapes: Object.fromEntries(SHAPE_OPTIONS.map((option) => [option.key, { k: 1, x: 0, y: 0 }])),
   };
   const data = { shapes: {}, alders: [], alderByWard: {}, events: [], eventById: {}, meta: {}, layers: {},
-                 wardLayerSummary: {}, wardAreas: {} };
+                 wardLayerSummary: {}, wardAreas: {}, committees: null };
   const ui = {};
 
   /* ── Values per view ──────────────────────────────────────────────────── */
@@ -442,6 +464,7 @@
       const vote = voteOf(ward);
       return vote === NOT_ON_ROSTER_LABEL ? 'url(#cc-hatch)' : (VOTE_COLORS[vote] || '#ffffff');
     }
+    if (state.view === 'committees') return committeeFill(ward);
     return ALDER_FILL;
   }
 
@@ -451,7 +474,105 @@
     if (state.view === 'tenure') return `${alder.years_on_council.toFixed(TENURE_DECIMALS)} yr`;
     if (state.view === 'absence') return `${alder.percent_absent.toFixed(ABSENCE_DECIMALS)}%`;
     if (state.view === 'votes') return voteOf(ward) === NOT_ON_ROSTER_LABEL ? '—' : voteOf(ward);
+    if (state.view === 'committees') return committeeValueText(ward);
     return '';
+  }
+
+  /* ── Committees view (committees.json) ────────────────────────────────── */
+
+  function committeeList() {
+    return data.committees.committees;
+  }
+
+  // Overview maps (ward_maps.OVERVIEW_VIEWS, computed in Python: committees.json `overviews`). state.committee
+  // is an overview key (text) or a committee index (number).
+  function currentOverview() {
+    return data.committees.overviews.find((overview) => overview.key === state.committee) || null;
+  }
+
+  // This ward's assignments, in committee order: [{ committee, index, role }] (role = eLMS memberType).
+  function wardAssignments(ward) {
+    return (data.committees.by_ward[ward] || []).map(([index, role]) => ({ committee: committeeList()[index], index, role }));
+  }
+
+  // The ward's role on one committee (by index), or null if not on it.
+  function committeeRoleIn(ward, index) {
+    const found = wardAssignments(ward).find((assignment) => assignment.index === index);
+    return found ? found.role : null;
+  }
+
+  // Overview entry for a ward: { fills: [{color, opacity}], roles, short_labels }, or null (uncolored).
+  function overviewEntry(ward) {
+    return currentOverview().by_ward[ward] || null;
+  }
+
+  // Roles marked on the name (star, bold / italic): an overview = the ward's roles on that map;
+  // one committee = the role on that committee.
+  function committeeMarkRoles(ward) {
+    if (currentOverview()) return (overviewEntry(ward) || { roles: [] }).roles;
+    const role = committeeRoleIn(ward, state.committee);
+    return role ? [role] : [];
+  }
+
+  function nameWithRoleMarks(labelName, roles) {
+    const style = data.committees.style;
+    const marks = [];
+    if (roles.includes('Chair')) marks.push(style.chair_mark);
+    if (roles.includes('Vice Chair')) marks.push(style.vice_chair_mark);
+    return [labelName, ...marks].join(' ');
+  }
+
+  // Inline CSS for a name line: chair bold, vice chair italic, both bold italic
+  // (ward_maps CHAIR_FONT_WEIGHT / VICE_CHAIR_FONT_STYLE).
+  function roleFontCss(roles) {
+    const style = data.committees.style;
+    return (roles.includes('Chair') ? `font-weight:${style.chair_font_weight};` : '')
+      + (roles.includes('Vice Chair') ? `font-style:${style.vice_chair_font_style};` : '');
+  }
+
+  // [fill, opacity] for a ward. Several fills: stripes (drawMap's <defs>), each stripe with its own opacity.
+  function committeeFillAndOpacity(ward) {
+    const style = data.committees.style;
+    if (currentOverview()) {
+      const entry = overviewEntry(ward);
+      if (!entry) return [style.uncolored_fill, style.fill_opacity];
+      if (entry.fills.length === 1) return [entry.fills[0].color, entry.fills[0].opacity];
+      return [`url(#cc-stripes-${ward})`, 1];
+    }
+    if (!committeeRoleIn(ward, state.committee)) return [style.uncolored_fill, style.fill_opacity];
+    const committee = committeeList()[state.committee];
+    return [(style.view_fill === 'committee_color' && committee.color) || style.member_fallback_fill, style.fill_opacity];
+  }
+
+  function committeeFill(ward) {
+    return committeeFillAndOpacity(ward)[0];
+  }
+
+  // Value line (tiles) / third line (Map View): an overview with committee_line = the short labels; the
+  // combined overview = none; one committee = the alder's role on it.
+  function committeeValueText(ward) {
+    const overview = currentOverview();
+    if (overview) return overview.committee_line && overviewEntry(ward) ? overviewEntry(ward).short_labels.join(' / ') : '';
+    const role = committeeRoleIn(ward, state.committee);
+    return role ? COMMITTEE_ROLE_TEXT[role] || role : '';
+  }
+
+  // <pattern> per ward with more than one fill on an overview: 45° stripes, one per fill (chair first),
+  // each style.multi_chair_stripe_points wide (points -> map units like the labels).
+  function addStripePatterns(definitions, scale) {
+    if (state.view !== 'committees' || !currentOverview()) return;
+    const stripeUnits = data.committees.style.multi_chair_stripe_points
+      * data.meta.real_map_labels.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale;
+    Object.entries(currentOverview().by_ward).forEach(([ward, entry]) => {
+      if (entry.fills.length < 2) return;
+      const size = stripeUnits * entry.fills.length;
+      const pattern = svgEl('pattern', { id: `cc-stripes-${ward}`, patternUnits: 'userSpaceOnUse', width: size, height: size,
+                                         patternTransform: 'rotate(45)' });
+      pattern.append(svgEl('rect', { width: size, height: size, fill: data.committees.style.uncolored_fill }));
+      entry.fills.forEach((fill, index) => pattern.append(svgEl('rect', { x: index * stripeUnits, y: 0, width: stripeUnits, height: size,
+                                                                          fill: fill.color, 'fill-opacity': fill.opacity })));
+      definitions.append(pattern);
+    });
   }
 
   /* ── Wards tab: what each ward holds (ward_layer_summary.json) ─────────── */
@@ -543,6 +664,7 @@
     hatch.append(svgEl('rect', { width: 8, height: 8, fill: '#fff' }));
     hatch.append(svgEl('line', { x1: 0, y1: 0, x2: 0, y2: 8, stroke: '#999', 'stroke-width': 2 }));
     definitions.append(hatch);
+    addStripePatterns(definitions, scale);
     svg.append(definitions);
 
     const geometry = { toScreen, bounds: { minX, maxX, minY, maxY }, width: width + 2 * margin, height: height + 2 * margin,
@@ -557,6 +679,8 @@
       const pathText = shape.rings.map((ring) => 'M' + ring.map(toScreen).map((point) => point.map((value) => value.toFixed(1)).join(',')).join('L') + 'Z').join('');
       const path = svgEl('path', { d: pathText, fill: fillFor(shape.ward), class: 'cc-ward', 'fill-rule': 'evenodd',
                                    'data-ward': shape.ward });
+      // Committees: ward_maps COMMITTEE_FILL_OPACITY, as the notebook map (other views fill solid).
+      if (state.view === 'committees') path.setAttribute('fill-opacity', committeeFillAndOpacity(shape.ward)[1]);
       if (shape.ward === state.selectedWard) path.classList.add('cc-selected');
       path.addEventListener('mousemove', (event) => showTooltip(shape.ward, event));
       path.addEventListener('mouseleave', hideTooltip);
@@ -582,6 +706,7 @@
       const alder = data.alderByWard[shape.ward];
       let lines;
       let fontSize;
+      let lineStyles = [];   // inline CSS per line ('' = the .cc-label default)
       if (state.shapes === 'real' && REAL_MAP_LABEL === 'number') {
         lines = [String(Number(shape.ward))];
         fontSize = REAL_MAP_NUMBER_FONT_SIZE;
@@ -604,6 +729,13 @@
             const hidden = entry.names.length - shown.length;
             lines.push(...(hidden > 0 ? [...shown.slice(0, -1), `+${hidden + 1} more`] : shown));
           }
+        } else if (state.view === 'committees') {
+          // Name line with the role mark, chair bold / vice chair italic on a normal-weight base (the
+          // .cc-label default, 600, would hide the bold); then the committee line.
+          const roles = committeeMarkRoles(shape.ward);
+          lines = [`${Number(shape.ward)} ${nameWithRoleMarks(alder.label_name, roles)}`];
+          lineStyles = [`font-weight:400;${roleFontCss(roles)}`, 'font-weight:400'];
+          if (valueText(shape.ward)) lines.push(valueText(shape.ward));
         } else {
           lines = [`${Number(shape.ward)} ${alder.label_name}`];
           if (valueText(shape.ward)) lines.push(valueText(shape.ward));
@@ -620,7 +752,8 @@
         const offset = (index - (lines.length - 1) / 2) * fontSize * 1.15;
         const text = svgEl('text', { x: labelX.toFixed(1), y: (labelY + offset).toFixed(1), class: 'cc-label',
                                      'font-size': fontSize.toFixed(1), fill: ink,
-                                     'data-anchor-x': labelX.toFixed(1), 'data-anchor-y': labelY.toFixed(1) });
+                                     'data-anchor-x': labelX.toFixed(1), 'data-anchor-y': labelY.toFixed(1),
+                                     style: lineStyles[index] || '' });
         text.textContent = line;
         svg.append(text);
       });
@@ -992,12 +1125,12 @@
     // Points on the notebook figure -> this SVG's units.
     const unitsPerPoint = labelMeta.meters_per_point * DEGREES_PER_WEB_MERCATOR_METER * scale * REAL_MAP_LABEL_SCALE;
     const haloWidth = labelMeta.halo_points * unitsPerPoint;
-    function addText(x, y, content, fontPoints, baseline, anchor) {
+    function addText(x, y, content, fontPoints, baseline, anchor, extraCss = '') {
       const text = svgEl('text', { x: x.toFixed(1), y: y.toFixed(1), class: 'cc-label cc-label-notebook',
                                    'data-anchor-x': anchor[0].toFixed(1), 'data-anchor-y': anchor[1].toFixed(1),
                                    'font-size': (fontPoints * unitsPerPoint).toFixed(2),
                                    'stroke-width': haloWidth.toFixed(2),
-                                   style: `dominant-baseline:${baseline}` });   // inline: the .cc-label CSS would override an attribute
+                                   style: `dominant-baseline:${baseline};${extraCss}` });   // inline: the .cc-label CSS would override an attribute
       text.textContent = content;
       svg.append(text);
     }
@@ -1006,10 +1139,20 @@
       const alder = data.alderByWard[shape.ward];
       const wardNumber = String(Number(shape.ward));
       if (layout.kind === 'one_block') {
+        // "ward" over "Last name", the block centered on the anchor. Committees: the name carries the
+        // role mark and font (ward_maps.draw_ward_line_labels), plus a third line on chairs' wards.
         const fontPoints = layout.font_points[0];
         const lineStep = fontPoints * unitsPerPoint * NOTEBOOK_LINE_SPACING;
-        addText(anchorX, anchorY - lineStep / 2, wardNumber, fontPoints, 'central', [anchorX, anchorY]);
-        addText(anchorX, anchorY + lineStep / 2, alder.label_name, fontPoints, 'central', [anchorX, anchorY]);
+        const lines = [[wardNumber, ''], [alder.label_name, '']];
+        if (state.view === 'committees') {
+          const roles = committeeMarkRoles(shape.ward);
+          lines[1] = [nameWithRoleMarks(alder.label_name, roles), roleFontCss(roles)];
+          if (currentOverview() && committeeValueText(shape.ward)) lines.push([committeeValueText(shape.ward), '']);
+        }
+        lines.forEach(([content, css], index) => {
+          const lineY = anchorY + (index - (lines.length - 1) / 2) * lineStep;
+          addText(anchorX, lineY, content, fontPoints, 'central', [anchorX, anchorY], css);
+        });
       } else {
         const [nameFontPoints, valueFontPoints] = layout.font_points;
         addText(anchorX, anchorY, `${wardNumber} ${alder.label_name}`, nameFontPoints, 'text-after-edge', [anchorX, anchorY]);
@@ -1048,6 +1191,8 @@
         items.push(el('span', {}, [el('span', { class: 'cc-swatch', style: swatchStyle }),
                                    document.createTextNode(`${vote} (${counts[vote]})`)]));
       });
+    } else if (state.view === 'committees') {
+      items.push(...committeeLegendItems());
     } else if (state.view === 'wards' && state.layer === 'street_map') {
       items.push(el('span', { text: state.shapes === 'real'
         ? 'Wards colored so neighbors differ, over a street map.'
@@ -1069,6 +1214,39 @@
     ui.legend.replaceChildren(...items);
   }
 
+  // Chairs view: one swatch per colored committee, "short label — full name"; one committee: member
+  // swatch and counts. Both: what the star / bold / italic mean.
+  function committeeLegendItems() {
+    const style = data.committees.style;
+    const swatch = (color) => el('span', { class: 'cc-swatch', style: `background:${color};opacity:${style.fill_opacity}` });
+    const markKey = (role, text) => el('span', { style: roleFontCss([role]), text: `${role === 'Chair' ? style.chair_mark : style.vice_chair_mark} ${text}` });
+    const overview = currentOverview();
+    if (overview) {
+      const colored = committeeList().filter((committee) => committee.in_chairs_view);
+      const items = [];
+      if (overview.roles.includes('Chair')) items.push(markKey('Chair', 'bold = chair'));
+      if (overview.roles.includes('Vice Chair')) items.push(markKey('Vice Chair', 'italic = vice chair'));
+      const multiple = Object.values(overview.by_ward).filter((entry) => entry.fills.length > 1).length;
+      if (multiple) {
+        items.push(el('span', {}, [el('span', { class: 'cc-swatch', style: 'background: repeating-linear-gradient(45deg, #888 0 3px, #ddd 3px 6px)' }),
+          document.createTextNode(`striped = more than one (${multiple} wards)`)]));
+      }
+      if (overview.roles.length > 1 && style.combined_view_vice_chair_fill === 'lighter') {
+        items.push(el('span', { text: 'full color = chair, light = vice chair' }));
+      }
+      colored.forEach((committee) => items.push(el('span', { class: 'cc-legend-committee' }, [
+        swatch(committee.color), el('strong', { text: committee.short_label }), document.createTextNode(` — ${committee.name}`)])));
+      return items;
+    }
+    const committee = committeeList()[state.committee];
+    const members = Object.keys(data.alderByWard).filter((ward) => committeeRoleIn(ward, state.committee));
+    return [
+      el('span', {}, [swatch(committeeFill(members[0])), document.createTextNode(`${committee.name}: ${members.length} members`)]),
+      markKey('Chair', `bold = chair (${committee.chair_wards.length})`),
+      markKey('Vice Chair', `italic = vice chair (${committee.vice_chair_wards.length})`),
+    ];
+  }
+
   /* ── Tooltip (hover card) ─────────────────────────────────────────────── */
 
   function showTooltip(ward, mouseEvent) {
@@ -1084,6 +1262,7 @@
     if (state.view === 'wards' && state.layer === 'street_map') {
       lines.push(el('div', { text: `Area: ${wardAreaText(ward)}` }));
     }
+    if (state.view === 'committees') lines.push(committeeTooltipList(ward));
     if (state.view === 'wards' && data.wardLayerSummary[state.layer]) {
       const entry = layerEntry(ward);
       const layerLabel = LAYER_OPTIONS.find((option) => option.key === state.layer).label;
@@ -1103,6 +1282,28 @@
     if (top + box.height > window.innerHeight) top = mouseEvent.clientY - box.height - padding;
     ui.tooltip.style.left = `${Math.max(4, left)}px`;
     ui.tooltip.style.top = `${Math.max(4, top)}px`;
+  }
+
+  // Hover card, committees view: every current assignment, short labels, chairs first.
+  //   Chair: Ethics · Vice chair: … · Member: … · Joint committees (n): …
+  function committeeTooltipList(ward) {
+    const assignments = wardAssignments(ward);
+    const rows = [];
+    ['Chair', 'Vice Chair', 'Member'].forEach((role) => {
+      const names = assignments.filter((assignment) => assignment.role === role && assignment.committee.body_type !== 'Joint Committee')
+        .map((assignment) => assignment.committee.short_label);
+      if (names.length) rows.push(el('div', {}, [el('span', { style: roleFontCss([role]), text: `${COMMITTEE_ROLE_TEXT[role]}: ` }),
+                                                 document.createTextNode(names.join(', '))]));
+    });
+    const joint = assignments.filter((assignment) => assignment.committee.body_type === 'Joint Committee');
+    const jointShown = TOOLTIP_JOINT_COMMITTEES === 'all' ? joint
+      : TOOLTIP_JOINT_COMMITTEES === 'count' ? [] : joint.filter((assignment) => assignment.role !== 'Member');
+    if (joint.length && !jointShown.length) rows.push(el('div', { text: `Joint committees: ${joint.length}` }));
+    if (jointShown.length) {
+      rows.push(el('div', { text: `Joint committees (${joint.length})${jointShown.length < joint.length ? ', chair or vice chair of' : ''}: ` + jointShown.map((assignment) =>
+        assignment.committee.short_label + (assignment.role !== 'Member' ? ` (${COMMITTEE_ROLE_TEXT[assignment.role] || assignment.role})` : '')).join(', ') }));
+    }
+    return el('div', { class: 'cc-tooltip-list' }, [el('strong', { text: 'Committees' }), ...rows]);
   }
 
   // Hover card for a point on the layer map: its hover_name (export LAYER_HOVER_NAME_COLUMN).
@@ -1190,7 +1391,24 @@
       { key: 'ward', label: 'Ward', value: (alder) => Number(alder.ward), num: true },
       { key: 'name', label: 'Alder', value: (alder) => alder.display_name },
     ];
-    if (state.view === 'votes') {
+    if (state.view === 'committees' && currentOverview()) {
+      // Counts leave out joint committees (they are listed in the hover card).
+      const shortLabels = (alder, role) => wardAssignments(alder.ward)
+        .filter((assignment) => assignment.role === role && assignment.committee.body_type !== 'Joint Committee')
+        .map((assignment) => assignment.committee.short_label).join(', ');
+      columns.push(
+        { key: 'chair_of', label: 'Chair of', value: (alder) => shortLabels(alder, 'Chair') },
+        { key: 'vice_chair_of', label: 'Vice chair of', value: (alder) => shortLabels(alder, 'Vice Chair') },
+        { key: 'committee_count', label: 'Committees', num: true, value: (alder) => wardAssignments(alder.ward)
+          .filter((assignment) => assignment.committee.body_type !== 'Joint Committee').length });
+    } else if (state.view === 'committees') {
+      // Sorted chair, vice chair, member, not on it.
+      const roleOrder = ['Chair', 'Vice Chair', 'Member'];
+      columns.push({ key: 'role', label: 'Role', value: (alder) => {
+        const role = committeeRoleIn(alder.ward, state.committee);
+        return role ? roleOrder.indexOf(role) : roleOrder.length;
+      }, format: (value) => (value < roleOrder.length ? COMMITTEE_ROLE_TEXT[roleOrder[value]] : '—') });
+    } else if (state.view === 'votes') {
       columns.push({ key: 'vote', label: 'Vote', value: (alder) => voteOf(alder.ward) });
     } else if (state.view === 'wards' && state.layer === 'street_map') {
       columns.push({ key: 'area', label: 'Area (sq mi)', value: (alder) => data.wardAreas[alder.ward].area_sq_mi, num: true,
@@ -1266,6 +1484,32 @@
     return select;
   }
 
+  // Committees dropdown: the overview maps, then every committee grouped by body type.
+  function committeeSelect() {
+    const select = el('select', { class: 'cc-select', 'aria-label': 'Committee' });
+    data.committees.overviews.forEach((overview) => {
+      const option = el('option', { value: overview.key, text: overview.label });
+      if (overview.key === state.committee) option.selected = true;
+      select.append(option);
+    });
+    Object.entries(COMMITTEE_GROUP_LABELS).forEach(([bodyType, groupLabel]) => {
+      const group = el('optgroup', { label: groupLabel });
+      committeeList().forEach((committee, index) => {
+        if (committee.body_type !== bodyType) return;
+        const option = el('option', { value: String(index), text: committee.name });
+        if (index === state.committee) option.selected = true;
+        group.append(option);
+      });
+      if (group.childElementCount) select.append(group);
+    });
+    select.addEventListener('change', () => {
+      const isOverview = data.committees.overviews.some((overview) => overview.key === select.value);
+      state.committee = isOverview ? select.value : Number(select.value);
+      render();
+    });
+    return select;
+  }
+
   function layerSelect() {
     const select = el('select', { class: 'cc-select', 'aria-label': 'Map layer' },
       LAYER_OPTIONS.map((option) => {
@@ -1295,6 +1539,7 @@
     ui.controls.replaceChildren(...[
       segmented(TAB_OPTIONS, state.tab, (key) => { state.tab = key; updateView(); render(); }),
       state.tab === 'alders' ? alderMeasureSelect() : null,   // dropdown only on the Alders tab
+      state.view === 'committees' ? committeeSelect() : null, // second dropdown: which committee
       state.tab === 'wards' ? layerSelect() : null,           // layer dropdown only on the Wards tab
       segmented(SHAPE_OPTIONS, state.shapes, (key) => { state.shapes = key; render(); }),
     ].filter(Boolean));
@@ -1351,9 +1596,11 @@
       fetchJson('meta.json').then((meta) => { data.meta = meta; }),
       fetchJson('ward_layer_summary.json').then((summary) => { data.wardLayerSummary = summary; }),
       fetchJson('ward_areas.json').then((areas) => { data.wardAreas = areas.by_ward; }),
+      fetchJson('committees.json').then((committees) => { data.committees = committees; }),
     ]).then(() => {
       data.alders.forEach((alder) => { data.alderByWard[alder.ward] = alder; });
       data.events.forEach((event) => { data.eventById[event.event_id] = event; });
+      state.committee = data.committees.overviews[0].key;   // default overview (ward_maps.OVERVIEW_VIEWS order)
       state.eventId = data.meta.default_split_event_id || (data.events[0] && data.events[0].event_id);
       buildPage(container);
       render();
