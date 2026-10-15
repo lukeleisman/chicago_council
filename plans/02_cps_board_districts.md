@@ -19,6 +19,24 @@ e.g. Data Portal `6mci-28cz`, `a3hw-pyw5`) — not the Board of Ed districts. Ca
 For each: URL, publisher, date, format (GeoJSON / shapefile / block equivalency), whether it's the final
 enacted map. Put the table to the user; **the user picks**. Nothing found → stop and write it up.
 
+### Step 1 results (2026-10-15) — waiting on the user's pick
+The enacted law is **PA 103-0584** (SB 15, effective 2024-03-18), Article 1 "Chicago Board of Education
+District Act", §1-5: **10 districts, each split into 2 subdistricts (1A, 1B … 10B)**, each subdistrict a list
+of 2020 census blocks (38,794 blocks in total, none listed twice). §1-10(d)–(g) assign any unlisted or
+double-listed part of the city. Text: https://ftp.ilga.gov/Public%20Acts/103/103-0584.htm (ilga.gov blocks
+scripts; the ftp mirror is its stated public repository).
+
+| Candidate | Publisher, date | Format | Matches the law? |
+|---|---|---|---|
+| A. Build from the law: dissolve 2020 blocks per §1-5 list | IL General Assembly (law) + Data Portal `3aji-w8h2` (Census Blocks 2020) | text list + GeoJSON | is the law; 24 listed blocks are missing from `3aji-w8h2`, 14 portal blocks are in no list |
+| B. `ERSB_20_Sub_District_Map_FA1_SB_15.zip` (ilsenateredistricting.com, labeled "proposed", Floor Amendment 1) | IL Senate Democrats redistricting site; .shp dated 2024-03-07 | shapefile, 20 rows (LONGNAME "District 1a", DISTRICT 1–20, TOTAL population) | every one of the 38,770 law blocks found on the portal has its interior point inside the matching subdistrict (100% per subdistrict) |
+| C. "Chicago Elected School Board 20-District Map" (ArcGIS item `ad7c6d1283b44d28b73460f2b02f012f`, used by the Tribune's lookup app) | Chicago Tribune (owner `cmalon`) | GeoJSON, 20 rows | geometry identical to B (symmetric difference 0 for all 20); adds `School Board Member` (2024 names) and `Elected School Board District` |
+
+Not found: anything on the Chicago Data Portal, chicagoelections.gov, or ArcGIS Hub from the City/CPS/CBOE.
+OPEN QUESTION: no later law redrawing the subdistricts was found (HB1713, 104th GA, amends §34-3 but lists
+no blocks), but this was not exhaustive.
+Scratch evidence (not committed): the comparison scripts and downloads in this session's scratchpad.
+
 ## Step 2 — add the layer (same pattern as every other layer)
 1. `scripts/fetch_layers.py`: add a row to `LAYERS` (layer_name e.g. `cps_board_districts_2024`,
    dataset id, download_method, portal page id, notes with source and date). Not a Socrata source → a new

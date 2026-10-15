@@ -25,6 +25,20 @@
   // Page title and version (user, 2026-10-05). The version line opens the footer text.
   const PAGE_TITLE = 'Chicago City Council 2023–2027 term';
   const DASHBOARD_VERSION = '0.1';
+  // Open-source note, its own paragraph at the end of the footer (user's wording, 2026-10-15;
+  // "of feature requests" -> "or feature requests"). Each piece of text in
+  // OPEN_SOURCE_PARTS is plain text or { text, href } for a link (opens in a new tab).
+  //   'GitHub repository'                  -> the repo (public)
+  //   'bug reports or feature requests'    -> the repo's Issues page (my pick, 2026-10-15; could be
+  //                                          plain text instead)
+  const REPOSITORY_URL = 'https://github.com/lukeleisman/chicago_council';
+  const OPEN_SOURCE_PARTS = [
+    'This dashboard is open source; the code is in this ',
+    { text: 'GitHub repository', href: REPOSITORY_URL },
+    '. Feel free to fork it, contribute, or submit ',
+    { text: 'bug reports or feature requests', href: `${REPOSITORY_URL}/issues` },
+    '.',
+  ];
 
   // Map never taller than this share of the window height (vh). Was 78; raised to 82 when the
   // subtitle line (about 32 px, ~4vh on a 784 px window) was removed (user, 2026-10-05: "slightly
@@ -1580,6 +1594,8 @@
             `includes council meetings through ${formatDate(data.meta.newest_meeting_date)}.`,
           ...(data.meta.about_text || []),
         ].join(' ') }),
+        el('p', {}, OPEN_SOURCE_PARTS.map((part) => (typeof part === 'string' ? document.createTextNode(part)
+          : el('a', { href: part.href, target: '_blank', rel: 'noopener', text: part.text })))),
       ]),
       ui.tooltip,
     );
