@@ -81,6 +81,52 @@ To embed on another site (e.g. a WordPress Custom HTML block):
 ```
 The script finds `data/` relative to its own URL.
 
+## Automated updates
+
+`.github/workflows/update-data.yml` updates the dashboard data **Mondays and Thursdays at 09:00 UTC**
+(4 am Chicago in daylight time, 3 am in standard time). It can also be started by hand: Actions tab →
+"Update dashboard data" → "Run workflow".
+
+Each run:
+1. downloads the last raw-data snapshot (GitHub Release `raw-data`, asset `raw_data_snapshot.tar.gz`)
+   and unpacks it (`scripts/raw_snapshot.py unpack`);
+2. `scripts/fetch_elms.py update`: lists, new matters, and saved matters whose `lastPublicationDate`
+   changed (`MATTER_REFRESH_RULE`), plus recent council meetings. It appends a record to
+   `data/raw/elms/update_runs.json`, including what eLMS had posted per recent meeting (for measuring
+   how long votes take to appear);
+3. `build_tables.py all` → `export_dashboard_data.py --data-only` (alders, split events, committees,
+   meta; the ward shapes and map layers are exported only by hand) → `check_dashboard_data.py`;
+4. if the hard checks pass: commits `docs/data/` to `main` if it changed (this is what updates the live
+   page), and replaces the snapshot asset with a new one.
+
+Checks (`scripts/check_dashboard_data.py`; every threshold is a named constant there):
+- **Hard** (nothing is published, the run fails, GitHub emails you): a missing or broken `docs/data`
+  file; not exactly one current alder per ward; a current alder without a tenure start date, photo, or
+  absence denominator; table row counts or saved-file counts going down; fewer split events; a file
+  shrinking too much; total size too large. The build's own stops (a new vote value, an unknown
+  duplicate) also fail the run.
+- **Soft** (published; a comment on the open issue "Data update warnings", which emails you): a ward's
+  alder changed; a committee, chair, or vice chair changed; an alder's absent-meeting count jumped;
+  many new split events; unmatched placeholder person IDs; a recent council meeting still missing its
+  agenda or attendance; no new council meeting for a long time; matters that failed to download.
+
+The report from every run is on that run's summary page.
+
+**New alder warning.** A newly appointed alder has no DataMade start date (tenure comes from the frozen
+extract `reference/datamade_council_memberships.csv`), so the hard check stops the publish. Fix: add
+an entry to `TENURE_START_OVERRIDES` in `scripts/build_tables.py` with a citation, or download a newer
+DataMade database and run `scripts/extract_datamade_memberships.py`. Then commit and re-run the
+workflow. The Map View labels may also need re-optimizing (`scripts/optimize_map_labels.py`).
+
+**Local copy of the published data.** To work with the same raw data the live dashboard was built from:
+```bash
+gh release download raw-data --pattern raw_data_snapshot.tar.gz --dir data/snapshot --clobber
+python scripts/raw_snapshot.py unpack --overwrite   # replaces those files under data/; leaves others alone
+python scripts/build_tables.py all
+```
+`build_tables.AS_OF_DATE_RULE` is `"run_date"` (tenure counts to today); set it to `"fixed"` to
+reproduce older numbers.
+
 ## Notebooks
 
 - `notebooks/map_layers_review.ipynb` — draws every map layer for visual review.

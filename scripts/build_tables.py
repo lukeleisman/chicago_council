@@ -57,9 +57,23 @@ OUTPUT_DIR = REPO_DIR / "data" / "tables"
 
 # Table format (decided 2026-10-04): CSV, so tables open anywhere.
 
-# "Today" for tenure: years on council are counted up to this date at most.
-# Same value as AS_OF_DATE in notebooks/tables_review.ipynb.
-AS_OF_DATE = "2026-10-04"
+# "Today" for tenure: years on council are counted up to this date at most. Committee
+# "current" rules use it too (council_metrics.COMMITTEE_AS_OF_DATE).
+#   "run_date" = the Chicago calendar date the build runs (user, 2026-10-13: scheduled updates,
+#                so tenure keeps counting on the live page)
+#   "fixed"    = FIXED_AS_OF_DATE, to reproduce older numbers. 2026-10-04 is the value used
+#                through 2026-10-13 and in notebooks/tables_review.ipynb (its own AS_OF_DATE).
+AS_OF_DATE_RULE = "run_date"
+FIXED_AS_OF_DATE = "2026-10-04"
+
+# Where the DataMade council memberships (tenure start dates) come from:
+#   "extract_csv" = reference/datamade_council_memberships.csv, committed; made from the database
+#                   by scripts/extract_datamade_memberships.py (user, 2026-10-10: scheduled runs
+#                   can't carry the 3.5 GB database). Its .retrieved note gives the database date.
+#   "sqlite"      = the database itself, DATAMADE_DB_PATH (how every build before 2026-10-13 ran)
+# No fallback between them: the chosen one must exist.
+DATAMADE_MEMBERSHIP_SOURCE = "extract_csv"
+DATAMADE_EXTRACT_PATH = REPO_DIR / "reference" / "datamade_council_memberships.csv"
 
 # DataMade's organization name for the full council (from its `organization` table).
 DATAMADE_COUNCIL_ORGANIZATION = "Chicago City Council"
@@ -192,6 +206,14 @@ KNOWN_DUPLICATE_ATTENDANCE = {
         "Harris listed twice (both Absent) in the 2026-03-11 meeting's attendance",
 }
 
+# The as-of date itself, from AS_OF_DATE_RULE (above). "YYYY-MM-DD" text, like every date here.
+if AS_OF_DATE_RULE == "run_date":
+    AS_OF_DATE = pd.Timestamp.now(tz=LOCAL_TIMEZONE).strftime("%Y-%m-%d")
+elif AS_OF_DATE_RULE == "fixed":
+    AS_OF_DATE = FIXED_AS_OF_DATE
+else:
+    raise ValueError(AS_OF_DATE_RULE)
+
 
 # ---------------------------------------------------------------------------
 # Loading
@@ -202,6 +224,15 @@ def load_elms_people():
 
 
 def load_datamade_council_memberships():
+    """DataMade council memberships (person_name, start_date, end_date), from DATAMADE_MEMBERSHIP_SOURCE."""
+    if DATAMADE_MEMBERSHIP_SOURCE == "extract_csv":
+        return pd.read_csv(DATAMADE_EXTRACT_PATH, dtype=str)
+    if DATAMADE_MEMBERSHIP_SOURCE == "sqlite":
+        return load_datamade_council_memberships_from_sqlite()
+    raise ValueError(DATAMADE_MEMBERSHIP_SOURCE)
+
+
+def load_datamade_council_memberships_from_sqlite():
     with sqlite3.connect(DATAMADE_DB_PATH) as connection:
         return pd.read_sql_query("""
             SELECT m.person_name, m.start_date, m.end_date

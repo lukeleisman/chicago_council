@@ -16,9 +16,11 @@ Files written (all small; sizes printed at the end):
                          ward_maps display settings) and each ward's assignments (added 2026-10-07)
 
 Usage:
-  python scripts/export_dashboard_data.py
+  python scripts/export_dashboard_data.py              # everything
+  python scripts/export_dashboard_data.py --data-only  # DATA_ONLY_FILES only (scheduled runs)
 """
 
+import hashlib
 import json
 import sys
 from datetime import datetime, timezone
@@ -188,6 +190,34 @@ ABOUT_TEXT = [
     "In case of missing tenure data, an alderperson's tenure is assumed to be continuous from their start date.",
 ]
 
+# "About the data" dates (user, 2026-10-13, for scheduled updates): the page says
+# "Data checked <exported_at>; last changed <data_changed_at>; includes council meetings through
+# <newest_meeting_date>." All three are in meta.json.
+#   exported_at          when this export ran (every scheduled run exports)
+#   data_changed_at      exported_at of the last export whose data differed from the export before it.
+#                        "Differed" = the fingerprint below changed. The previous value is read from the
+#                        meta.json already in docs/data/ (in a scheduled run: the published one).
+#   newest_meeting_date  latest meetings.meeting_date with body NEWEST_MEETING_BODY and at least one
+#                        vote event of a NEWEST_MEETING_ROSTER_KINDS kind linked to it (a meeting listed
+#                        in eLMS but with no votes posted yet doesn't count)
+NEWEST_MEETING_BODY = "City Council"
+NEWEST_MEETING_ROSTER_KINDS = ["roll call"]
+# The fingerprint: SHA-256 over the DATA_ONLY_FILES (the files that change with eLMS data), with
+# these fields left out. They change on every run without the data changing: tenure counts up to
+# the run date (build_tables.AS_OF_DATE_RULE "run_date"), and meta.json's own dates.
+FINGERPRINT_LEFT_OUT_FIELDS = {
+    "alders.json": ["years_on_council"],          # per alder record
+    "meta.json": ["exported_at", "tenure_as_of", "data_changed_at", "data_fingerprint"],
+}
+
+# --data-only (user, 2026-10-15: scheduled runs write the data files only; the shapes and layers are
+# exported by hand, e.g. for a new council term). Re-exporting the unchanged shapes flips last-digit
+# rounding (up to 0.000001 degree, ~0.1 m; seen 2026-10-15), which would look like a change.
+# In this mode meta.json's "real_map_labels" and "layers" sections, which come from the shape export,
+# are copied from the meta.json already in docs/data/.
+DATA_ONLY_FILES = ["alders.json", "split_events.json", "committees.json", "meta.json"]
+META_SECTIONS_FROM_SHAPE_EXPORT = ["real_map_labels", "layers"]
+
 # ---------------------------------------------------------------------------
 
 
@@ -306,6 +336,35 @@ def write_json(data, file_name):
     output_path = OUTPUT_DIR / file_name
     output_path.write_text(json.dumps(data, separators=(",", ":"), ensure_ascii=False))
     print(f"wrote {output_path.relative_to(REPO_DIR)} ({output_path.stat().st_size / 1000:,.0f} KB)")
+    WRITTEN_FILES.append(file_name)
+
+
+# Files written by this run, in order (printed at the end).
+WRITTEN_FILES = []
+
+
+def data_fingerprint(meta):
+    """SHA-256 of the DATA_ONLY_FILES (meta.json = `meta` itself), minus FINGERPRINT_LEFT_OUT_FIELDS."""
+    digest = hashlib.sha256()
+    for file_name in sorted(DATA_ONLY_FILES):
+        content = meta if file_name == "meta.json" else json.loads((OUTPUT_DIR / file_name).read_text())
+        left_out = FINGERPRINT_LEFT_OUT_FIELDS.get(file_name, [])
+        if isinstance(content, list):      # alders.json: one record per alder
+            content = [{key: value for key, value in record.items() if key not in left_out} for record in content]
+        elif isinstance(content, dict):
+            content = {key: value for key, value in content.items() if key not in left_out}
+        digest.update(file_name.encode())
+        digest.update(json.dumps(content, sort_keys=True, ensure_ascii=False).encode())
+    return digest.hexdigest()
+
+
+def newest_meeting_date():
+    """NEWEST_MEETING_BODY meeting date with at least one NEWEST_MEETING_ROSTER_KINDS vote event (see above)."""
+    tables = council_metrics.load_tables()
+    events = tables["vote_events"][tables["vote_events"].roster_kind.isin(NEWEST_MEETING_ROSTER_KINDS)]
+    meetings = tables["meetings"]
+    with_votes = meetings[(meetings.body == NEWEST_MEETING_BODY) & meetings.meeting_id.isin(events.meeting_id)]
+    return with_votes.meeting_date.max()
 
 
 def export_shapes(labels_by_ward):
@@ -476,15 +535,19 @@ def export_committees(alder_records):
           f"in the chairs view); assignment rows {len(assignments)}")
 
 
-def export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta):
+def export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta, data_only=False):
     # ABOUT_TEXT states these rule values in words; stop if a rule no longer matches the sentence.
     assert council_metrics.SPLIT_MIN_NAY == 1, "ABOUT_TEXT says 'at least one Nay vote'"
     assert council_metrics.SPLIT_ACTION_BY == "City Council" and council_metrics.SPLIT_ROSTER_KINDS == ["roll call"], \
         "ABOUT_TEXT says 'council roll call votes'"
     assert council_metrics.ABSENT_MEETING_SHARE_THRESHOLD == 0.5, "ABOUT_TEXT says 'more than 50%'"
-    write_json({
-        "exported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    meta_path = OUTPUT_DIR / "meta.json"
+    previous_meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    exported_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    meta = {
+        "exported_at": exported_at,
         "tenure_as_of": build_tables.AS_OF_DATE,
+        "newest_meeting_date": newest_meeting_date(),
         "default_split_event_id": default_event_id,
         # Map View labels: font sizes in points on the notebook figure; meters_per_point converts
         # them to EPSG:3857 map units. Anchors are in wards_real.geojson `labels`.
@@ -540,16 +603,35 @@ def export_meta(default_event_id, counted_event_count, meters_per_point, layer_m
             "tenure history": "DataMade chicago-council-scrapers nightly export",
             "ward boundaries": "Chicago Data Portal, Boundaries - Wards (2023-)",
         },
-    }, "meta.json")
+    }
+    if data_only:
+        # The sections the shape export would have written: unchanged from the published meta.json.
+        for section in META_SECTIONS_FROM_SHAPE_EXPORT:
+            meta[section] = previous_meta[section]
+    # data_changed_at (see "About the data" dates above): kept from the previous meta.json when the
+    # fingerprint is the same, else this export's time.
+    meta["data_fingerprint"] = data_fingerprint(meta)
+    unchanged = previous_meta.get("data_fingerprint") == meta["data_fingerprint"]
+    meta["data_changed_at"] = previous_meta.get("data_changed_at") if unchanged else exported_at
+    print(f"data fingerprint {'unchanged' if unchanged else 'changed'} "
+          f"(previous {previous_meta.get('data_fingerprint', 'none')[:12]}, new {meta['data_fingerprint'][:12]}); "
+          f"data_changed_at {meta['data_changed_at']}; newest meeting {meta['newest_meeting_date']}")
+    write_json(meta, "meta.json")
 
 
 if __name__ == "__main__":
+    data_only = "--data-only" in sys.argv[1:]
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     default_event_id, counted_event_count, alder_records = export_alders_and_votes()
     export_committees(alder_records)
-    labels_by_ward, meters_per_point = real_map_label_layout(alder_records)
-    export_shapes(labels_by_ward)
-    # The layer sizes in points reuse meters_per_point, measured on FIGURE_SIZE_MAP.
-    assert tuple(map_layers.FIGURE_SIZE_LARGE) == tuple(ward_maps.FIGURE_SIZE_MAP), "layer figure size differs"
-    layer_meta = export_layers(meters_per_point)
-    export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta)
+    if data_only:
+        meters_per_point = layer_meta = None   # meta.json keeps the published values (META_SECTIONS_FROM_SHAPE_EXPORT)
+    else:
+        labels_by_ward, meters_per_point = real_map_label_layout(alder_records)
+        export_shapes(labels_by_ward)
+        # The layer sizes in points reuse meters_per_point, measured on FIGURE_SIZE_MAP.
+        assert tuple(map_layers.FIGURE_SIZE_LARGE) == tuple(ward_maps.FIGURE_SIZE_MAP), "layer figure size differs"
+        layer_meta = export_layers(meters_per_point)
+    export_meta(default_event_id, counted_event_count, meters_per_point, layer_meta, data_only=data_only)
+    assert sorted(WRITTEN_FILES) == sorted(DATA_ONLY_FILES) or not data_only, WRITTEN_FILES
+    print(f"{'data-only' if data_only else 'full'} export: {len(WRITTEN_FILES)} files written")

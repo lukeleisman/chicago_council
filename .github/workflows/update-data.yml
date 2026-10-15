@@ -1,0 +1,107 @@
+# Scheduled dashboard data update (plan: sessions/2026-10-10_auto_update_handoff.md).
+#
+# Downloads the last raw-data snapshot (GitHub Release "raw-data"), fetches only what changed in
+# eLMS, rebuilds the tables, exports docs/data/, and checks the result
+# (scripts/check_dashboard_data.py). Then:
+#   - hard check failed  -> nothing is published; the run fails (GitHub emails the repo owner)
+#   - hard checks passed -> docs/data/ is committed to main if it changed (pushing to main is what
+#                           makes the live page change), and the snapshot asset is replaced
+#   - soft warnings      -> one open issue titled ISSUE_TITLE gets a new comment (or is opened)
+# The check report goes on the run's summary page every run.
+#
+# OPEN QUESTION: GitHub disables scheduled workflows in public repos after 60 days without repo
+# activity; it's not documented whether commits made by this workflow count. GitHub emails before
+# disabling; re-enable from the Actions tab. The staleness soft check also catches a stopped schedule.
+
+name: Update dashboard data
+
+on:
+  schedule:
+    # Mon + Thu 09:00 UTC = 4 am Chicago in daylight time (CDT), 3 am in standard time (CST).
+    # Each run logs what eLMS had posted per recent meeting (data/raw/elms/update_runs.json), so the
+    # days can be moved once the posting lag is known.
+    - cron: "0 9 * * 1,4"
+  workflow_dispatch: {}   # "Run workflow" button on the Actions tab
+
+permissions:
+  contents: write   # commit docs/data, replace the release asset
+  issues: write     # soft warnings
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: raw-data                         # scripts/raw_snapshot.py RELEASE_TAG
+  SNAPSHOT_FILE: data/snapshot/raw_data_snapshot.tar.gz   # scripts/raw_snapshot.py SNAPSHOT_FILE
+  ISSUE_TITLE: Data update warnings
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash -el {0}   # login shell, so the micromamba environment is active
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-file: environment.yml
+          cache-environment: true
+
+      - name: Download and unpack the last snapshot
+        run: |
+          gh release download "$RELEASE_TAG" --pattern "$(basename "$SNAPSHOT_FILE")" --dir "$(dirname "$SNAPSHOT_FILE")"
+          python scripts/raw_snapshot.py unpack
+
+      - name: Fetch what changed in eLMS
+        run: python -u scripts/fetch_elms.py update
+
+      - name: Build tables
+        run: python -u scripts/build_tables.py all
+
+      - name: Export docs/data (data files only)
+        run: python -u scripts/export_dashboard_data.py --data-only   # shapes/layers: by hand
+
+      - name: Check
+        id: check
+        run: python -u scripts/check_dashboard_data.py
+
+      - name: Report on the summary page
+        if: always()
+        run: |
+          if [ -f data/check/check_report.md ]; then cat data/check/check_report.md >> "$GITHUB_STEP_SUMMARY"
+          else echo "No check report: the run stopped before the check step." >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Commit docs/data if it changed
+        run: |
+          changed=$(python -c "import json; print(json.load(open('data/check/result.json'))['docs_data_changed'])")
+          if [ "$changed" != "True" ]; then echo "docs/data unchanged: no commit"; exit 0; fi
+          message=$(python -c "
+          import json, datetime
+          result = json.load(open('data/check/result.json'))
+          print(f\"Data update {result['checked_at'][:10]}: {result['new_vote_events']} new vote events, \"
+                f\"{result['matters_refetched']} matters re-fetched\")")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/data
+          git commit -m "$message"
+          git push
+
+      - name: Pack and replace the snapshot
+        run: |
+          python scripts/raw_snapshot.py pack
+          gh release upload "$RELEASE_TAG" "$SNAPSHOT_FILE" --clobber
+
+      - name: Soft warnings to the issue
+        run: |
+          if [ ! -s data/check/soft_warnings.md ]; then echo "no soft warnings"; exit 0; fi
+          echo "" >> data/check/soft_warnings.md
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> data/check/soft_warnings.md
+          number=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number,title \
+                   --jq "map(select(.title == \"$ISSUE_TITLE\")) | .[0].number // empty")
+          if [ -n "$number" ]; then gh issue comment "$number" --body-file data/check/soft_warnings.md
+          else gh issue create --title "$ISSUE_TITLE" --body-file data/check/soft_warnings.md; fi

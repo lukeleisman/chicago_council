@@ -12,9 +12,13 @@ Every rule is a named constant below, with who decided it and when. The notebook
 evidence for each (excluded event, counts at each filter step, cross-checks).
 """
 
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import build_tables
 
 # ---------------------------------------------------------------------------
 # Settings
@@ -68,7 +72,9 @@ COMMITTEE_BODY_TYPES = ["Committee", "Sub-Committee", "Joint Committee"]
 # OPEN QUESTION: 3 member rows are active in eLMS but their end date has passed (Quezada, Reilly and
 # Conway on three joint committees; listed in ward_views §5.1). "elms_is_active" keeps them.
 CURRENT_COMMITTEE_RULE = "elms_is_active"
-COMMITTEE_AS_OF_DATE = "2026-10-04"          # same as build_tables.AS_OF_DATE
+# The as-of date is build_tables.AS_OF_DATE (its AS_OF_DATE_RULE), read from there, not copied
+# (until 2026-10-13 this was its own "2026-10-04").
+COMMITTEE_AS_OF_DATE = build_tables.AS_OF_DATE
 # Order of committees (dropdown order, color order): by body type in COMMITTEE_BODY_TYPES order,
 # then by eLMS body name A-Z.
 

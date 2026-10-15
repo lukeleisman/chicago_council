@@ -28,9 +28,11 @@ Usage:
   python scripts/fetch_elms.py meetings          # detail for council meetings in term
   python scripts/fetch_elms.py refresh_meetings  # re-fetch recent meeting details
   python scripts/fetch_elms.py matters           # detail for every matter in the list or on an agenda
+  python scripts/fetch_elms.py refresh_matters   # re-fetch saved matters chosen by MATTER_REFRESH_RULE
+  python scripts/fetch_elms.py update            # all of the above in order + log (scheduled runs)
   python scripts/fetch_elms.py matters_by_id IDS_FILE SUBFOLDER   # one-off: listed matterIds
   python scripts/fetch_elms.py meeting_matter_votes PAIRS_FILE    # one-off: meeting-side votes
-Each step (except refresh_meetings and matter_list) skips files already on
+Each step (except refresh_meetings, refresh_matters, update and matter_list) skips files already on
 disk, so it can be re-run to resume.
 """
 
@@ -166,16 +168,68 @@ KNOWN_DELETED_MATTER_IDS = {
 # meeting still had an empty agenda on 2026-09-30 although it has votes.
 MEETING_REFRESH_DAYS = 30
 
+# Which saved matter files get re-downloaded (the `matters` step only fetches
+# matters not on disk yet, so a matter that gets a new vote would never change).
+# Options:
+#   "list_publication_date_differs" = re-fetch a saved matter when its
+#       lastPublicationDate in the new matter_list.json differs from the one in
+#       the saved detail file (user's choice, 2026-10-10). On 2026-09-30 the two
+#       matched for all 17,072 listed matters. Saved matters that are not in
+#       the matter list have no list date to compare: see MATTER_REFRESH_UNLISTED.
+#   "actions_after_days" = re-fetch matters with any action dated in the last
+#       MATTER_REFRESH_ACTION_DAYS days (not built; the fallback if the rule
+#       above turns out to miss new votes).
+# OPEN QUESTION: does lastPublicationDate change when eLMS adds a vote to a
+# saved matter? First run, 2026-10-15: 1,087 listed matters had a new date
+# (none had a vote added or removed); a spot-check of 303 matters whose date
+# had NOT changed found 302 identical and 1 that had changed after the list
+# was fetched, with a new date (O2026-0027938; see below). No saved matter had
+# gained a vote yet, so the question stays open until one does.
+MATTER_REFRESH_RULE = "list_publication_date_differs"
+MATTER_REFRESH_ACTION_DAYS = 30   # used only by "actions_after_days"
+
+# Saved matter files that are NOT in the new matter_list.json (so the rule
+# above can't check them):
+#   "refetch_all" = re-fetch every one, every run (user, 2026-10-15). 164 on
+#       2026-10-15: 163 agenda items without votes, plus O2026-0027938, which
+#       left the list when eLMS removed its only roll call. Of the 164, 2 had
+#       changed (O2026-0025202 and O2026-0027938, each lost a 50-vote council
+#       roll call).
+#   "skip"        = leave them as first downloaded (how it worked before)
+MATTER_REFRESH_UNLISTED = "refetch_all"
+
+# The `update` step appends one record per run to this file: what was
+# fetched, and per recent council meeting what the API had posted that day.
+# Read after a few weeks to see how long eLMS takes to post votes.
+UPDATE_RUN_LOG = OUTPUT_DIR / "update_runs.json"
+
+# Download failures that do NOT stop an `update` run. Every other failure
+# (including a 403/429 stop) makes `update` exit non-zero, so nothing is
+# published. 404 = eLMS no longer has that matter (as with
+# KNOWN_DELETED_MATTER_IDS); the old saved file, if any, is kept, and the
+# dashboard check raises a soft warning listing it.
+# OPEN QUESTION (for the user): the plan said both "any failure fails the run"
+# (step 1) and "a 404 is a soft warning" (step 4). This setting does the
+# second; set() does the first.
+UPDATE_CONTINUES_ON_HTTP_STATUS = {404}
+
 # ---------------------------------------------------------------------------
 
 
 # Most recent X-RateLimit-Remaining value seen (None until the first response).
 latest_rate_limit_remaining = None
 
+# Requests sent in this run (logged by `update`). Workers share it, so it is
+# changed under a lock.
+request_count = 0
+request_count_lock = threading.Lock()
+
 
 def fetch_json(path, query_params=None):
     """GET one API path and return parsed JSON. Waits first if the rate-limit allowance is low."""
-    global latest_rate_limit_remaining
+    global latest_rate_limit_remaining, request_count
+    with request_count_lock:
+        request_count += 1
     while latest_rate_limit_remaining is not None and latest_rate_limit_remaining < RATE_LIMIT_FLOOR:
         print(f"  rate-limit allowance {latest_rate_limit_remaining} < {RATE_LIMIT_FLOOR}; "
               f"pausing {RATE_LIMIT_PAUSE_SECONDS}s")
@@ -369,8 +423,8 @@ def refresh_meeting_details():
         print(f"  meeting {meeting['date'][:10]}: agenda items {old_agenda_size} -> {len(new_meeting.get('agenda') or [])}")
 
 
-def fetch_matter_details():
-    """Detail (actions + per-member votes) for every matter in matter_list.json or on a saved agenda."""
+def wanted_matter_ids():
+    """(listed_ids, agenda_ids): matterIds in matter_list.json, and on saved council agendas."""
     # Source 1: the matter list (see MATTER_LIST_FILTER).
     matter_list_path = OUTPUT_DIR / "matter_list.json"
     if not matter_list_path.exists():
@@ -383,6 +437,15 @@ def fetch_matter_details():
         for agenda_item in meeting.get("agenda") or []:
             if agenda_item.get("matterId"):
                 agenda_ids.add(agenda_item["matterId"])
+    return listed_ids, agenda_ids
+
+
+def fetch_matter_details():
+    """Detail (actions + per-member votes) for every matter in matter_list.json or on a saved agenda.
+
+    Returns (matterIds fetched, failures) for the `update` log.
+    """
+    listed_ids, agenda_ids = wanted_matter_ids()
     matter_ids = (listed_ids | agenda_ids) - set(KNOWN_DELETED_MATTER_IDS)
     already_fetched = {path.stem for path in (OUTPUT_DIR / "matters").glob("*.json")}
     remaining_ids = sorted(matter_ids - already_fetched)
@@ -391,8 +454,124 @@ def fetch_matter_details():
     print(f"  {len(matter_ids)} matters in total; {len(remaining_ids)} still to fetch; "
           f"{PARALLEL_REQUESTS} requests at a time")
 
-    fetch_in_parallel([(f"matter/{matter_id}", OUTPUT_DIR / "matters" / f"{matter_id}.json")
-                       for matter_id in remaining_ids])
+    failures = fetch_in_parallel([(f"matter/{matter_id}", OUTPUT_DIR / "matters" / f"{matter_id}.json")
+                                  for matter_id in remaining_ids])
+    return remaining_ids, failures
+
+
+def refresh_matter_details():
+    """Re-fetch (overwrite) saved matter files chosen by MATTER_REFRESH_RULE and MATTER_REFRESH_UNLISTED.
+
+    Returns (matterIds re-fetched, failures, details for the log). A failed
+    re-fetch leaves the old saved file in place.
+    """
+    if MATTER_REFRESH_RULE != "list_publication_date_differs":
+        raise NotImplementedError(f"MATTER_REFRESH_RULE {MATTER_REFRESH_RULE!r} is not built yet")
+    list_date_by_id = {record["matterId"]: record["lastPublicationDate"]
+                       for record in json.loads((OUTPUT_DIR / "matter_list.json").read_text())["data"]}
+    _, agenda_ids = wanted_matter_ids()
+    saved_paths = {path.stem: path for path in (OUTPUT_DIR / "matters").glob("*.json")}
+
+    changed_ids = []
+    for matter_id, list_date in sorted(list_date_by_id.items()):
+        if matter_id not in saved_paths:
+            continue   # new matter: the `matters` step fetches it
+        saved_date = json.loads(saved_paths[matter_id].read_text()).get("lastPublicationDate")
+        if saved_date != list_date:
+            changed_ids.append(matter_id)
+            print(f"  changed {matter_id}: saved {saved_date} -> list {list_date}")
+    # Saved files the rule cannot check: not in the list, so no list date to compare (MATTER_REFRESH_UNLISTED).
+    unlisted_ids = sorted(set(saved_paths) - set(list_date_by_id))
+    unlisted_on_agendas = sorted(set(unlisted_ids) & agenda_ids)
+    if MATTER_REFRESH_UNLISTED == "refetch_all":
+        unlisted_to_fetch = unlisted_ids
+    elif MATTER_REFRESH_UNLISTED == "skip":
+        unlisted_to_fetch = []
+    else:
+        raise ValueError(MATTER_REFRESH_UNLISTED)
+    print(f"  {len(saved_paths)} saved matter files; {len(changed_ids)} with a new lastPublicationDate; "
+          f"{len(unlisted_ids)} not in the matter list ({len(unlisted_on_agendas)} of them on agendas): "
+          f"{len(unlisted_to_fetch)} re-fetched ({MATTER_REFRESH_UNLISTED})")
+
+    refetch_ids = changed_ids + unlisted_to_fetch
+    failures = fetch_in_parallel([(f"matter/{matter_id}", saved_paths[matter_id]) for matter_id in refetch_ids])
+    return refetch_ids, failures, {"refetched_because_date_changed": len(changed_ids),
+                                   "refetched_because_not_in_list": len(unlisted_to_fetch),
+                                   "saved_files_not_in_list": len(unlisted_ids),
+                                   "saved_files_not_in_list_on_agendas": len(unlisted_on_agendas),
+                                   "matter_refresh_unlisted": MATTER_REFRESH_UNLISTED}
+
+
+def recent_council_meeting_report():
+    """One record per council meeting from MEETING_REFRESH_DAYS ago onward: what the saved files hold now.
+
+    vote_events = actions with a per-member roster, in any saved matter file, whose meetingId is this meeting.
+    """
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=MEETING_REFRESH_DAYS)).strftime("%Y-%m-%d")
+    meetings = [meeting for meeting in council_meetings_in_term() if meeting["date"][:10] >= cutoff_date]
+    vote_events_by_meeting = {meeting["meetingId"]: 0 for meeting in meetings}
+    for matter_path in (OUTPUT_DIR / "matters").glob("*.json"):
+        for action in json.loads(matter_path.read_text()).get("actions") or []:
+            if action.get("votes") and action.get("meetingId") in vote_events_by_meeting:
+                vote_events_by_meeting[action["meetingId"]] += 1
+    report = []
+    for meeting in sorted(meetings, key=lambda meeting: meeting["date"]):
+        meeting_path = OUTPUT_DIR / "meetings" / f"{meeting['meetingId']}.json"
+        detail = json.loads(meeting_path.read_text()) if meeting_path.exists() else {}
+        roll_calls = detail.get("attendance") or []
+        report.append({
+            "meeting_id": meeting["meetingId"], "date_utc": meeting["date"], "status": meeting.get("status"),
+            "has_detail_file": meeting_path.exists(),
+            "agenda_items": len(detail.get("agenda") or []),
+            "attendance_roll_calls": len(roll_calls),
+            "attendance_members": sum(len(roll_call.get("votes") or []) for roll_call in roll_calls),
+            "vote_events": vote_events_by_meeting[meeting["meetingId"]],
+        })
+    return report
+
+
+def run_update():
+    """Everything a scheduled run needs, in order; appends one record to UPDATE_RUN_LOG.
+
+    lists -> matter_list -> meetings -> refresh_meetings -> matters (new) -> refresh_matters.
+    Exits non-zero (after writing the log) if any download failed with a status
+    not in UPDATE_CONTINUES_ON_HTTP_STATUS, so a scheduled run stops before publishing.
+    """
+    started_at = datetime.now(timezone.utc)
+    print("== lists");             fetch_lists()
+    print("== matter_list");       fetch_matter_list()        # exits non-zero itself if its checks fail
+    print("== meetings");          fetch_meeting_details()
+    print("== refresh_meetings");  refresh_meeting_details()
+    print("== matters (new)");     new_ids, new_failures = fetch_matter_details()
+    print("== refresh_matters");   refreshed_ids, refresh_failures, refresh_details = refresh_matter_details()
+    print("== recent meetings");   meeting_report = recent_council_meeting_report()
+    for meeting in meeting_report:
+        print(f"  {meeting['date_utc'][:10]} {meeting['status']}: agenda {meeting['agenda_items']}, "
+              f"attendance roll calls {meeting['attendance_roll_calls']}, vote events {meeting['vote_events']}")
+
+    failures = [{"api_path": api_path, "reason": reason} for api_path, reason in new_failures + refresh_failures]
+    blocking = [failure for failure in failures
+                if failure["reason"] not in {f"HTTP {status}" for status in UPDATE_CONTINUES_ON_HTTP_STATUS}]
+    run_record = {
+        "started_at": started_at.isoformat(timespec="seconds"),
+        "finished_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "request_count": request_count,
+        "matter_refresh_rule": MATTER_REFRESH_RULE,
+        "new_matter_ids": [matter_id for matter_id in new_ids
+                           if matter_id not in {failure["api_path"].split("/")[-1] for failure in failures}],
+        "refetched_matter_ids": refreshed_ids,
+        **refresh_details,
+        "failures": failures,
+        "blocking_failure_count": len(blocking),
+        "recent_council_meetings": meeting_report,
+    }
+    runs = json.loads(UPDATE_RUN_LOG.read_text()) if UPDATE_RUN_LOG.exists() else []
+    write_json(UPDATE_RUN_LOG, runs + [run_record])
+    print(f"== logged to {UPDATE_RUN_LOG.name}: {run_record['request_count']} requests, "
+          f"{len(run_record['new_matter_ids'])} new matters, {len(refreshed_ids)} re-fetched, "
+          f"{len(failures)} failed ({len(blocking)} blocking)")
+    if blocking:
+        sys.exit(f"  {len(blocking)} downloads failed; not safe to publish")
 
 
 def fetch_in_parallel(jobs):
@@ -476,6 +655,7 @@ def fetch_meeting_matter_votes(pairs_file):
 if __name__ == "__main__":
     steps = {"lists": fetch_lists, "matter_list": fetch_matter_list, "meetings": fetch_meeting_details,
              "refresh_meetings": refresh_meeting_details, "matters": fetch_matter_details,
+             "refresh_matters": refresh_matter_details, "update": run_update,
              "matters_by_id": fetch_matters_by_id, "meeting_matter_votes": fetch_meeting_matter_votes}
     # Extra command-line words are passed to the step (e.g. a file name).
     steps[sys.argv[1]](*sys.argv[2:])

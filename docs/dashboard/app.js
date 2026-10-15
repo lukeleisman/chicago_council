@@ -1573,7 +1573,11 @@
         el('strong', { text: data.meta.about_heading || '' }),
         el('p', { text: [
           `Version ${DASHBOARD_VERSION}, preliminary dashboard.`,
-          `Data exported ${formatDate((data.meta.exported_at || '').slice(0, 10))}, alder tenure as of ${formatDate(data.meta.tenure_as_of)}.`,
+          // User's wording, 2026-10-13 (scheduled updates). Dates from meta.json; see export_dashboard_data.py
+          // "About the data" dates. exported_at = when the data was last checked (UTC date).
+          `Data checked ${formatDate((data.meta.exported_at || '').slice(0, 10))}; ` +
+            `last changed ${formatDate((data.meta.data_changed_at || '').slice(0, 10))}; ` +
+            `includes council meetings through ${formatDate(data.meta.newest_meeting_date)}.`,
           ...(data.meta.about_text || []),
         ].join(' ') }),
       ]),
