@@ -81,7 +81,7 @@ New script `scripts/build_calendar.py` with subcommand `survey`. It prints, with
 - After `fetch_elms.py update`, add a step `python -u scripts/build_calendar.py build`. Use if/else, never `exit` (see commit 4b46df4).
 - Commit step: `git add docs/data docs/calendar`. The commit condition also has to fire when only the calendar changed. To do that, `build_calendar.py` writes `calendar_changed` into its own small result file (or `data/check/result.json` gets a new key). The code compares feeds without `DTSTAMP`, so an unchanged calendar does not cause a daily commit.
 - Five runs a week instead of two raises eLMS requests. That is about 221 requests per run under `RATE_LIMIT_FLOOR`; report the real number after the first run.
-- **Depends on** the open TODO check: does a push by the bot trigger the Pages build? If not, add a `workflow_dispatch` of `pages-build-deployment`, or a deploy step.
+- A push by the bot does trigger the Pages build (checked 2026-11-12: every scheduled update since 2026-11-02 was followed by a successful `pages-build-deployment`), so no extra deploy step is needed.
 
 ## Phase D: Google Calendar mirror (needs user setup first)
 **User steps, which I can't do:**

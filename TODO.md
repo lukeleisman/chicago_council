@@ -9,7 +9,6 @@ and read each hit in context.
 
 ## Check after the first scheduled run (Mon 2026-10-19, 09:00 UTC)
 Steps in `sessions/2026-10-15_auto_update_handoff.md` ("Check after the first scheduled run").
-- [ ] Did the bot's push (GITHUB_TOKEN) trigger the Pages build? If not, fix the workflow.
 - [ ] Does `lastPublicationDate` change when a saved matter gains a vote? (`scripts/fetch_elms.py:182`,
       `MATTER_REFRESH_RULE`)
 - [ ] Read any "Data update warnings" issue.
