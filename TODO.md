@@ -16,6 +16,10 @@ Steps in `sessions/2026-10-15_auto_update_handoff.md` ("Check after the first sc
 - [ ] After ~4 weeks (mid-Nov 2026): posting lag from `data/raw/elms/update_runs.json`; revisit run days and
       the initial-guess thresholds in `scripts/check_dashboard_data.py`.
 
+## Next up
+- [ ] Meetings calendar: [`plans/10_meetings_calendar.md`](plans/10_meetings_calendar.md) (planned 2026-11-11);
+      start with the Phase A survey, then ask the status question.
+
 ## Open questions in code
 - [ ] `scripts/fetch_elms.py:90` — confirm term start `TERM_START_DATE = "2023-05-15"`.
 - [ ] `scripts/fetch_elms.py:211` — `UPDATE_CONTINUES_ON_HTTP_STATUS = {404}`: soft warning vs. fail the run.

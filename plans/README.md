@@ -28,6 +28,7 @@ cleaning or filtering; amounts as numbers; **push to `main` = live on the websit
 | [07_landing_page.md](07_landing_page.md) | 7 landing page / intro | PLAN-TO-PLAN | do last |
 | [08_councilmatic_comparison.md](08_councilmatic_comparison.md) | 8 Councilmatic errors | PLAN-TO-PLAN | — |
 | [09_bills_sponsored.md](09_bills_sponsored.md) | new: bills sponsored + sponsors on Votes | A: EXECUTE, B: PLAN-TO-PLAN | — |
+| [10_meetings_calendar.md](10_meetings_calendar.md) | new: subscribable meetings calendar (.ics + Google) | A: EXECUTE (survey, stop and ask), then EXECUTE | — |
 
 ## Suggested order
 1. 00 README (and the quick items in TODO.md, e.g. the Mon 2026-10-19 scheduled-run check)
