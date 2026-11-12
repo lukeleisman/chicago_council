@@ -29,6 +29,10 @@ LAYER_STYLE = {
     "cta_rail_stations":  {"kind": "point",  "label_column": None},
     "cps_schools_sy2526": {"kind": "point",  "label_column": None},
     "ward_offices":       {"kind": "point",  "label_column": None},
+    # Added 2026-10-15 (plans/02). LONGNAME = "District 1A" ... "District 10B", as in the raw file (the law,
+    # PA 103-0584, calls them "Subdistrict 1A"). My trial pick, not chosen by the user yet; options:
+    # "LONGNAME" as is, or the code alone ("1A"; no raw column has it, it would be derived from LONGNAME).
+    "cps_board_subdistricts_2024": {"kind": "fill", "label_column": "LONGNAME"},
 }
 
 # Fill palette: soft colors so the basemap and ward lines stay visible. Extra

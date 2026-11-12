@@ -37,6 +37,23 @@ OPEN QUESTION: no later law redrawing the subdistricts was found (HB1713, 104th 
 no blocks), but this was not exhaustive.
 Scratch evidence (not committed): the comparison scripts and downloads in this session's scratchpad.
 
+**User's pick (2026-10-15): C**, with board member names. Check against A (dissolved law blocks vs C, per
+subdistrict): edges differ by 0.003–0.012 sq mi; C covers 5.7 sq mi more in total (1A +2.7 = O'Hare, whose
+blocks the law doesn't list (ward 41 is 99% in 1A in C); 10A +2.1, 6B +0.7, 10B +0.2 = lake side).
+
+### Step 2 progress (2026-10-15)
+- Done (not committed): `fetch_layers.py` row `cps_board_subdistricts_2024` (new download_method
+  `arcgis_item`); fetched (20 polygons, all valid). `map_layers.LAYER_STYLE` entry, label `LONGNAME` (trial).
+- Drawn with map_layers_review's draw_layer: 4 fill colors; picture matches the Tribune / Chalkbeat maps.
+- Overlaps measured (overlaps_for_layer, not yet in DASHBOARD_LAYERS): 166 ward × subdistrict pairs.
+  Subdistricts per ward at `share_of_ward` minimum 0 / 0.001 / 0.01 / 0.05:
+  {1:1,2:8,3:25,4:9,5:5,6:1,7:1} / {1:4,2:14,3:18,4:9,5:5} / {1:6,2:15,3:20,4:6,5:3} / {1:9,2:23,3:11,4:5,5:2}.
+- Raw `School Board Member` for 8B is the text "Unappointed". OPEN QUESTION: what date the names are as of
+  (ArcGIS item created 2026-08-19 by ms timestamp; no date in the data).
+- Next, after the user's choices (summary minimum, label text, where names show): steps 4–8 below.
+  Note: Wards-tab Map View label positions are "optimized" (export asserts a nudge per feature), so a new
+  labeled layer needs `measure_label_boxes.js` + `optimize_map_labels.py`, or a per-layer plain-position option.
+
 ## Step 2 — add the layer (same pattern as every other layer)
 1. `scripts/fetch_layers.py`: add a row to `LAYERS` (layer_name e.g. `cps_board_districts_2024`,
    dataset id, download_method, portal page id, notes with source and date). Not a Socrata source → a new

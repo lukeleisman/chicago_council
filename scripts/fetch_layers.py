@@ -1,4 +1,4 @@
-"""Download map layers (boundaries and points) from the Chicago Data Portal.
+"""Download map layers (boundaries and points) from the Chicago Data Portal (and one ArcGIS Online item).
 
 Each layer is saved verbatim as GeoJSON under data/raw/layers/<layer_name>.geojson,
 plus data/raw/layers/manifest.json recording the URL, dataset ID and
@@ -29,10 +29,16 @@ REQUEST_TIMEOUT_SECONDS = 120
 # Largest layer here is precincts (~1,300 rows), so 50,000 leaves wide margin.
 RESOURCE_ROW_LIMIT = 50000
 
+# "arcgis_item" layers (added 2026-10-15 for the CPS board subdistricts, which are on no City portal).
+ARCGIS_ITEM_DATA_URL = "https://www.arcgis.com/sharing/rest/content/items/{item_id}/data"
+ARCGIS_ITEM_PAGE_URL = "https://www.arcgis.com/home/item.html?id={item_id}"
+
 # Socrata offers two GeoJSON download URLs. Neither works for every dataset
 # (tested 2026-09-29), so each layer below names the one that returned full data:
 #   "resource":   /resource/{id}.geojson?$limit=N
 #   "geospatial": /api/geospatial/{id}?method=export&format=GeoJSON
+#   "arcgis_item": not the Data Portal: an ArcGIS Online item's data file, ARCGIS_ITEM_DATA_URL.
+#                  portal_page_id is then the page to cite (ARCGIS_ITEM_PAGE_URL).
 #
 # Several portal entries are "map" views wrapping an underlying dataset; the
 # map-view IDs return empty GeoJSON, so the underlying dataset ID is used and
@@ -64,6 +70,14 @@ LAYERS = [
      "Chicago Public Schools - School Locations SY2526 (latest found)."),
     ("ward_offices", "htai-wnw4", "resource", "htai-wnw4",
      "Ward Offices (alderperson office addresses)."),
+    # User's pick, 2026-10-15 (option C in plans/02_cps_board_districts.md). Chicago Tribune ArcGIS item
+    # "Chicago Elected School Board 20-District Map" (owner cmalon), the layer behind the Tribune's
+    # "Chicago School Board & Neighborhood Lookup". Geometry identical to the IL Senate redistricting
+    # site's ERSB_20_Sub_District_Map_FA1_SB_15 shapefile; both agree with every 2020 census block listed
+    # in PA 103-0584 §1-5 (the enacted law). Adds a `School Board Member` column (as of the item's date).
+    ("cps_board_subdistricts_2024", "ad7c6d1283b44d28b73460f2b02f012f", "arcgis_item",
+     "ad7c6d1283b44d28b73460f2b02f012f",
+     "Chicago Board of Education subdistricts 1A-10B (PA 103-0584), Chicago Tribune ArcGIS GeoJSON."),
 ]
 
 # ---------------------------------------------------------------------------
@@ -74,6 +88,8 @@ def download_url(dataset_id, download_method):
         return f"{PORTAL_BASE_URL}/resource/{dataset_id}.geojson?$limit={RESOURCE_ROW_LIMIT}"
     if download_method == "geospatial":
         return f"{PORTAL_BASE_URL}/api/geospatial/{dataset_id}?method=export&format=GeoJSON"
+    if download_method == "arcgis_item":
+        return ARCGIS_ITEM_DATA_URL.format(item_id=dataset_id)
     raise ValueError(f"unknown download_method {download_method!r}")
 
 
@@ -94,7 +110,8 @@ def main(force_refetch):
         output_path.write_bytes(raw_bytes)
         manifest[layer_name] = {
             "dataset_id": dataset_id,
-            "portal_page": f"{PORTAL_BASE_URL}/d/{portal_page_id}",
+            "portal_page": (ARCGIS_ITEM_PAGE_URL.format(item_id=portal_page_id) if download_method == "arcgis_item"
+                            else f"{PORTAL_BASE_URL}/d/{portal_page_id}"),
             "download_url": url,
             "retrieved_at": datetime.now(timezone.utc).isoformat(),
             "feature_count": feature_count,
