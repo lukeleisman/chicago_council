@@ -5,8 +5,9 @@ through its ward map.
 
 ## Status: dashboard live
 
-The dashboard is served by GitHub Pages from `main` → `/docs` and embedded on the WordPress page
-(page 153). **Pushing to `main` updates the live page.** The vote and attendance data have updated
+The dashboard is served by GitHub Pages from `main` → `/docs` and shown at
+https://lukeleisman.com/chicago-city-council/ (`pages/chicago-city-council.html` in the private website repo
+`luke_leisman_web`; the site moved off WordPress). **Pushing to `main` updates the live page.** The vote and attendance data have updated
 automatically twice a week since 2026-10-15 (see [Automated updates](#automated-updates)).
 
 ## What's on the dashboard
@@ -84,7 +85,7 @@ python scripts/export_dashboard_data.py           # writes docs/data/ (committed
 cd docs && python -m http.server 8765             # then open http://localhost:8765/
 ```
 
-To embed on another site (e.g. a WordPress Custom HTML block):
+To embed on another site (as lukeleisman.com does):
 ```html
 <div id="council-app"></div>
 <script src="https://lukeleisman.github.io/chicago_council/dashboard/app.js"></script>
