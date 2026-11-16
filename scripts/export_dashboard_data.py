@@ -144,6 +144,11 @@ WARDS_TAB_LABEL_POSITIONS = "optimized"
 WARDS_TAB_OPTIMIZED_FOR_SCALE = 1.5
 WARDS_TAB_WARD_NUMBER_OPTION = "joint"
 WARDS_TAB_PLAIN_SCALE = 1.25   # LAYER_MAP_LABEL_SCALE the plain positions were last shown at
+# Labeled layers drawn at the plain representative point even when WARDS_TAB_LABEL_POSITIONS is
+# "optimized". Only for a new layer whose label boxes are not measured yet (measuring needs the layer on
+# the page first: scripts/measure_label_boxes.js). Empty once the optimizer has nudges for every layer;
+# a labeled layer neither listed here nor in the offsets file stops the export.
+WARDS_TAB_PLAIN_POSITION_LAYERS = []
 
 
 def wards_tab_offsets():
@@ -160,7 +165,8 @@ LABEL_HALO_POINTS = 2.5
 # map_layers.LAYER_STYLE. No precincts, no census tracts (user). Each is drawn as the notebook's
 # large map (notebooks/map_layers_review.ipynb "One large map per layer"), styles from map_layers.py.
 DASHBOARD_LAYERS = ["community_areas", "neighborhoods", "zip_codes", "police_districts", "parks",
-                    "cta_rail_lines", "cta_rail_stations", "cps_schools_sy2526", "ward_offices"]
+                    "cta_rail_lines", "cta_rail_stations", "cps_schools_sy2526", "ward_offices",
+                    "cps_board_subdistricts_2024"]   # added 2026-11-16 (plans/02)
 # Name shown when hovering a point (stations, schools, ward offices; the plan's choice, 2026-10-05).
 # Layers not listed have no hover name. Column = the raw layer's column, copied as is.
 LAYER_HOVER_NAME_COLUMN = {
@@ -395,7 +401,7 @@ def export_layers(meters_per_point):
         raw_path = ward_maps.LAYERS_DIR / f"{layer_name}.geojson"
         frame_plot = gpd.read_file(raw_path).to_crs(ward_maps.PLOT_CRS).reset_index(drop=True)
         properties = pd.DataFrame(index=frame_plot.index)
-        properties["label"] = frame_plot[style["label_column"]].astype(str) if style["label_column"] else None
+        properties["label"] = map_layers.label_texts(frame_plot, layer_name) if style["label_column"] else None
         hover_column = LAYER_HOVER_NAME_COLUMN.get(layer_name)
         properties["hover_name"] = frame_plot[hover_column] if hover_column else None
         colors_used = None
@@ -409,7 +415,12 @@ def export_layers(meters_per_point):
         if style["label_column"]:
             label_points = frame_plot.representative_point()
             nudges = wards_tab_offsets()
-            if nudges is not None:
+            if nudges is not None and layer_name in WARDS_TAB_PLAIN_POSITION_LAYERS:
+                print(f"{layer_name}: plain label positions (WARDS_TAB_PLAIN_POSITION_LAYERS)")
+            elif nudges is not None:
+                assert layer_name in nudges["layers"], (
+                    f"{layer_name}: no optimizer nudges in {OPTIMIZED_OFFSETS_FILE.name}; run "
+                    "scripts/optimize_map_labels.py, or list it in WARDS_TAB_PLAIN_POSITION_LAYERS")
                 # Optimizer nudges, points -> PLOT_CRS meters, one per feature in this file's order.
                 layer_nudges = np.array(nudges["layers"][layer_name], dtype=float) * meters_per_point
                 assert len(layer_nudges) == len(frame_plot), f"{layer_name}: nudge count differs from features"

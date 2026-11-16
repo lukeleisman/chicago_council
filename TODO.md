@@ -59,4 +59,4 @@ Steps in `sessions/2026-10-15_auto_update_handoff.md` ("Check after the first sc
 - [ ] CPS administrative networks (lower priority). User, 2026-10-15.
 - [ ] Each file in [`plans/`](plans/README.md): 00 README, 01 committee attendance, 02 CPS board districts,
       03 caucuses, 04 vote context, 05 major roads, 06a bar charts, 06b agreement matrix, 07 landing page,
-      08 Councilmatic comparison, 09 bills sponsored.
+      08 Councilmatic comparison, 09 bills sponsored. (00 done 2026-10-15; 02 done 2026-11-16.)

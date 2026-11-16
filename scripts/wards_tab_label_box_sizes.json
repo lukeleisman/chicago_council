@@ -1,5 +1,5 @@
 {
-"about": "Wards tab Map View label boxes, measured 2026-10-05 in the dashboard (Chrome 151 on macOS; page system font, San Francisco; layer labels italic, ward numbers bold) at zoom 1 while LAYER_MAP_LABEL_SCALE was 1.25; divided by 1.25 here. Units: typographic points on the notebook figure at label scale 1, relative to the label anchor, y up, [x0, y0, x1, y1]. No halo. ink = canvas measureText actualBoundingBox (baseline placed from the middle of the getBBox box, since the text is drawn with dominant-baseline central); line_box = SVG getBBox. Layer labels are in the layer file's feature order; ward numbers in ward order 1..50.",
+"about": "Wards tab Map View label boxes, measured 2026-10-05 in the dashboard (Chrome 151 on macOS; page system font, San Francisco; layer labels italic, ward numbers bold) at zoom 1 while LAYER_MAP_LABEL_SCALE was 1.25; divided by 1.25 here. Units: typographic points on the notebook figure at label scale 1, relative to the label anchor, y up, [x0, y0, x1, y1]. No halo. ink = canvas measureText actualBoundingBox (baseline placed from the middle of the getBBox box, since the text is drawn with dominant-baseline central); line_box = SVG getBBox. Layer labels are in the layer file's feature order; ward numbers in ward order 1..50. cps_board_subdistricts_2024 added 2026-11-16 (plans/02): measured the same way in Chrome 151 on macOS at LAYER_MAP_LABEL_SCALE 1.5, divided by 1.5 here; ward numbers re-measured then and matched the values above within 0.01 pt, so they were left as they are.",
 "measured_at_scale": 1.25,
 "label_font_points": 6,
 "ward_number_font_points": 9,
@@ -3894,6 +3894,308 @@
 -3.75,
 3.25,
 3.75
+]
+}
+],
+"cps_board_subdistricts_2024": [
+{
+"text": "1A",
+"ink": [
+-2.66,
+-2.28,
+2.83,
+1.95
+],
+"line_box": [
+-3.33,
+-3.55,
+3.33,
+3.55
+]
+},
+{
+"text": "1B",
+"ink": [
+-2.67,
+-2.28,
+3.07,
+1.95
+],
+"line_box": [
+-3.29,
+-3.55,
+3.29,
+3.55
+]
+},
+{
+"text": "2A",
+"ink": [
+-3.57,
+-2.28,
+3.24,
+2.02
+],
+"line_box": [
+-3.75,
+-3.55,
+3.75,
+3.55
+]
+},
+{
+"text": "2B",
+"ink": [
+-3.59,
+-2.28,
+3.49,
+2.02
+],
+"line_box": [
+-3.69,
+-3.55,
+3.69,
+3.55
+]
+},
+{
+"text": "3A",
+"ink": [
+-3.49,
+-2.35,
+3.28,
+2.01
+],
+"line_box": [
+-3.81,
+-3.55,
+3.81,
+3.55
+]
+},
+{
+"text": "3B",
+"ink": [
+-3.5,
+-2.35,
+3.53,
+2.01
+],
+"line_box": [
+-3.77,
+-3.55,
+3.77,
+3.55
+]
+},
+{
+"text": "4A",
+"ink": [
+-3.59,
+-2.28,
+3.3,
+1.95
+],
+"line_box": [
+-3.87,
+-3.55,
+3.87,
+3.55
+]
+},
+{
+"text": "4B",
+"ink": [
+-3.6,
+-2.28,
+3.55,
+1.95
+],
+"line_box": [
+-3.81,
+-3.55,
+3.81,
+3.55
+]
+},
+{
+"text": "5A",
+"ink": [
+-3.35,
+-2.35,
+3.24,
+1.95
+],
+"line_box": [
+-3.79,
+-3.55,
+3.79,
+3.55
+]
+},
+{
+"text": "5B",
+"ink": [
+-3.37,
+-2.35,
+3.49,
+1.95
+],
+"line_box": [
+-3.74,
+-3.55,
+3.74,
+3.55
+]
+},
+{
+"text": "6A",
+"ink": [
+-3.27,
+-2.35,
+3.3,
+2.02
+],
+"line_box": [
+-3.85,
+-3.55,
+3.85,
+3.55
+]
+},
+{
+"text": "6B",
+"ink": [
+-3.29,
+-2.35,
+3.54,
+2.02
+],
+"line_box": [
+-3.79,
+-3.55,
+3.79,
+3.55
+]
+},
+{
+"text": "7A",
+"ink": [
+-3.11,
+-2.28,
+2.81,
+1.95
+],
+"line_box": [
+-3.48,
+-3.55,
+3.48,
+3.55
+]
+},
+{
+"text": "7B",
+"ink": [
+-3.38,
+-2.28,
+3.32,
+1.95
+],
+"line_box": [
+-3.59,
+-3.55,
+3.59,
+3.55
+]
+},
+{
+"text": "8A",
+"ink": [
+-3.53,
+-2.35,
+3.31,
+2.01
+],
+"line_box": [
+-3.85,
+-3.55,
+3.85,
+3.55
+]
+},
+{
+"text": "8B",
+"ink": [
+-3.55,
+-2.35,
+3.56,
+2.01
+],
+"line_box": [
+-3.8,
+-3.55,
+3.8,
+3.55
+]
+},
+{
+"text": "9A",
+"ink": [
+-3.38,
+-2.35,
+3.27,
+2.02
+],
+"line_box": [
+-3.82,
+-3.55,
+3.82,
+3.55
+]
+},
+{
+"text": "9B",
+"ink": [
+-3.43,
+-2.35,
+3.54,
+2.02
+],
+"line_box": [
+-3.79,
+-3.55,
+3.79,
+3.55
+]
+},
+{
+"text": "10A",
+"ink": [
+-4.51,
+-2.35,
+4.68,
+2.02
+],
+"line_box": [
+-5.15,
+-3.55,
+5.15,
+3.55
+]
+},
+{
+"text": "10B",
+"ink": [
+-4.56,
+-2.35,
+4.96,
+2.02
+],
+"line_box": [
+-5.13,
+-3.55,
+5.13,
+3.55
 ]
 }
 ]

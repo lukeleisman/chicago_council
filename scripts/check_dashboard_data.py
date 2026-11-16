@@ -62,7 +62,8 @@ EXPECTED_DOCS_DATA_FILES = {
     "wards_tiles_grid.geojson": ("features", []),
     **{f"layer_{name}.geojson": ("features", []) for name in [
         "community_areas", "neighborhoods", "zip_codes", "police_districts", "parks",
-        "cta_rail_lines", "cta_rail_stations", "cps_schools_sy2526", "ward_offices"]},
+        "cta_rail_lines", "cta_rail_stations", "cps_schools_sy2526", "ward_offices",
+        "cps_board_subdistricts_2024"]},   # added 2026-11-16 (plans/02)
     "ward_areas.json": ("any", []),
     "ward_layer_summary.json": ("any", []),
 }

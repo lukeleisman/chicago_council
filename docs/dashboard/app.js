@@ -146,6 +146,10 @@
     { key: 'cta_rail_lines', label: 'CTA rail lines' },
     { key: 'cta_rail_stations', label: 'CTA rail stations' },
     { key: 'cps_schools_sy2526', label: 'CPS schools (2025–26)' },
+    // Added 2026-11-16 (plans/02), next to CPS schools (user: the two school layers together, ward offices
+    // last). Dropdown wording is my pick, not chosen by the user. Labels are "1A" ... "10B" (user); no
+    // LAYER_NAME_PREFIX, so the hover card and table show "1A" as well.
+    { key: 'cps_board_subdistricts_2024', label: 'CPS board subdistricts (2024)' },
     { key: 'ward_offices', label: 'Ward offices' },
   ];
   const DEFAULT_LAYER = 'street_map';   // user, 2026-10-05: Wards tab opens on the street map (was community_areas)

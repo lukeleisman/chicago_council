@@ -112,6 +112,11 @@ WARD_SUMMARY_RULES = {
                            "name": "feature_name", "order": "alphabetical", "tile": "count"},
     "ward_offices":       {"source_layer": "ward_offices", "keep": "raw_ward_attribute",
                            "name": "feature_name", "order": "alphabetical", "tile": "list"},
+    # User, 2026-11-16 (plans/02): 1% of the ward, like the other polygon layers. Leaves 6 / 15 / 20 / 6 / 3
+    # wards with 1 / 2 / 3 / 4 / 5 subdistricts.
+    "cps_board_subdistricts_2024": {"source_layer": "cps_board_subdistricts_2024", "keep": "share_of_ward",
+                                    "minimum": 0.01, "name": "feature_name", "order": "largest_share_first",
+                                    "tile": "list"},
 }
 
 # ---------------------------------------------------------------------------
@@ -120,7 +125,12 @@ WARD_SUMMARY_RULES = {
 def load_layer(layer_name):
     frame = gpd.read_file(ward_maps.LAYERS_DIR / f"{layer_name}.geojson").to_crs(MEASURE_CRS).reset_index(drop=True)
     frame["feature_row"] = frame.index
-    frame["feature_name"] = frame[NAME_COLUMN[layer_name]].astype(str)
+    if NAME_COLUMN[layer_name] == map_layers.LAYER_STYLE[layer_name]["label_column"]:
+        # The label as drawn on the map (map_layers.label_texts: the column as is, or with
+        # LABEL_PREFIX_REMOVED taken off, e.g. CPS board subdistricts "District 1A" -> "1A").
+        frame["feature_name"] = map_layers.label_texts(frame, layer_name)
+    else:
+        frame["feature_name"] = frame[NAME_COLUMN[layer_name]].astype(str)
     alternative = ALTERNATIVE_NAME_COLUMN.get(layer_name)
     frame["feature_name_alternative"] = frame[alternative].astype(str) if alternative else ""
     raw_ward = RAW_WARD_COLUMN.get(layer_name)

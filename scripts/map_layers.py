@@ -30,10 +30,28 @@ LAYER_STYLE = {
     "cps_schools_sy2526": {"kind": "point",  "label_column": None},
     "ward_offices":       {"kind": "point",  "label_column": None},
     # Added 2026-10-15 (plans/02). LONGNAME = "District 1A" ... "District 10B", as in the raw file (the law,
-    # PA 103-0584, calls them "Subdistrict 1A"). My trial pick, not chosen by the user yet; options:
-    # "LONGNAME" as is, or the code alone ("1A"; no raw column has it, it would be derived from LONGNAME).
+    # PA 103-0584, calls them "Subdistrict 1A"). User, 2026-11-16: label "1A" (no raw column has it; it is
+    # LONGNAME with LABEL_PREFIX_REMOVED below taken off). Board member names: not shown (user, 2026-11-16).
     "cps_board_subdistricts_2024": {"kind": "fill", "label_column": "LONGNAME"},
 }
+
+# Text taken off the FRONT of a layer's label column to make the label (user, 2026-11-16: "1A", not
+# "District 1A"). Every value must start with it; label_texts() stops otherwise. Layers not listed: the
+# label column as is.
+LABEL_PREFIX_REMOVED = {"cps_board_subdistricts_2024": "District "}
+
+
+def label_texts(frame, layer_name):
+    """The label of each row of a raw layer frame, as strings: LAYER_STYLE label column, with any
+    LABEL_PREFIX_REMOVED taken off. Used by the export, the overlaps and the label optimizer, so all
+    three show the same text."""
+    texts = frame[LAYER_STYLE[layer_name]["label_column"]].astype(str)
+    prefix = LABEL_PREFIX_REMOVED.get(layer_name)
+    if prefix is None:
+        return texts
+    missing = [text for text in texts if not text.startswith(prefix)]
+    assert not missing, f"{layer_name}: labels without the prefix {prefix!r}: {missing}"
+    return texts.str[len(prefix):]
 
 # Fill palette: soft colors so the basemap and ward lines stay visible. Extra
 # entries beyond four are there in case the simple coloring method needs them.

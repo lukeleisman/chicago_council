@@ -29,7 +29,9 @@ Method (plain penalty optimization, scipy L-BFGS-B, exact gradient):
   Finally overlaps and regions are checked exactly. Anything left is printed, not hidden.
 
 Usage:
-  python scripts/optimize_map_labels.py
+  python scripts/optimize_map_labels.py                       full run (every map)
+  python scripts/optimize_map_labels.py --added-layers-only   only WARDS_TAB_LAYERS_SOLVED_ALONE, against
+                                                              the ward numbers already in the offsets file
 Output: data/tables/map_label_optimization.json (gitignored; before/after per scale),
 scripts/map_label_offsets_optimized.json (the nudges, read by the export) and a printed summary.
 """
@@ -79,6 +81,17 @@ WARDS_TAB_SCALES_TO_TRY = [1.25, 1.5]
 # Layers with labels (map_layers.LAYER_STYLE label_column), in DASHBOARD_LAYERS order.
 WARDS_TAB_LABELED_LAYERS = [layer for layer in export_dashboard_data.DASHBOARD_LAYERS
                             if map_layers.LAYER_STYLE[layer]["label_column"]]
+# Labeled layers added after the 2026-10-05 run, each solved ALONE against the ward numbers (user,
+# 2026-11-16, plans/02: nothing already on the site moves). Like 'fixed_first' for one layer: its labels
+# move, the ward numbers stay where the ward number option put them, and its labels only have to avoid the
+# ward numbers (no other layer is drawn with it). They are left out of the 'fixed_first' and 'joint'
+# solves, so adding one never moves a ward number or another layer's label.
+#   full run:              solved against that run's ward numbers
+#   --added-layers-only:   solved against the ward numbers already in OFFSETS_FILE; only these layers'
+#                          entries in that file change
+WARDS_TAB_LAYERS_SOLVED_ALONE = ["cps_board_subdistricts_2024"]
+# --added-layers-only writes its before/after report here (the full run's OUTPUT_FILE is left as is).
+ADDED_LAYERS_OUTPUT_FILE = REPO_DIR / "data" / "tables" / "map_label_optimization_added_layers.json"
 # Ward numbers on the Wards tab (drawn on every layer, including the street map and unlabeled layers).
 # Both options give ONE set of ward number positions for every layer (a number stays put when you
 # switch layers):
@@ -419,26 +432,61 @@ def run_alders(wards, ward_polygons_points, ward_anchors, results):
 
 # --- 2. Wards tab ---
 
+def load_wards_tab_layer(layer_name, box_sizes, meters_per_point):
+    """One labeled layer: features in the export's order (raw file order, PLOT_CRS), label text as the
+    export draws it (map_layers.label_texts), anchors, allowed regions and measured boxes."""
+    frame = gpd.read_file(ward_maps.LAYERS_DIR / f"{layer_name}.geojson").to_crs(ward_maps.PLOT_CRS).reset_index(drop=True)
+    texts = map_layers.label_texts(frame, layer_name).tolist()
+    measured = box_sizes["layers"][layer_name]
+    assert texts == [item["text"] for item in measured], f"{layer_name}: label order/text differs from the measurement"
+    anchors = anchors_in_points(frame.geometry, meters_per_point)
+    polygons = allowed_regions(to_points(frame.geometry, meters_per_point), LAYER_LABEL_EDGE_OUTSIDE_POINTS)
+    regions, insets = inset_regions(polygons, anchors)
+    smaller = [f"{text} {inset:.1f}" for text, inset in zip(texts, insets) if inset < LAYER_LABEL_EDGE_INSET_POINTS]
+    print(f"{layer_name}: {len(smaller)} shapes get a smaller edge inset than {LAYER_LABEL_EDGE_INSET_POINTS} pt: {smaller}")
+    return {"texts": texts, "anchors": anchors, "regions": regions,
+            "boxes_scale_1": [item[BOX_KIND] for item in measured]}
+
+
+def solve_layer_against_numbers(layer, layer_boxes, number_offsets, ward_anchors, number_boxes, ward_regions):
+    """A layer's label nudges with the ward numbers held fixed at number_offsets (they don't move)."""
+    count = len(layer["texts"])
+    offsets = solve(np.concatenate([np.zeros((count, 2)), number_offsets]),
+                    np.concatenate([layer["anchors"], ward_anchors]),
+                    np.concatenate([layer_boxes, number_boxes]),
+                    layer["regions"] + ward_regions,
+                    movable=np.array([True] * count + [False] * len(ward_anchors)))
+    return offsets[:count]
+
+
+def describe_layer_map(layer, layer_offsets, layer_boxes, number_offsets, ward_anchors, number_boxes,
+                       ward_regions, ward_names):
+    """Before (plain points, plain ward numbers) and after, for one layer's map with the ward numbers."""
+    count = len(layer["texts"])
+    base = np.concatenate([layer["anchors"], ward_anchors])
+    boxes = np.concatenate([layer_boxes, number_boxes])
+    regions = layer["regions"] + ward_regions
+    label_names = layer["texts"] + ward_names
+    today = np.zeros((count + len(ward_anchors), 2))
+    proposed = np.concatenate([layer_offsets, number_offsets])
+    return (describe(today, today, base, boxes, regions, label_names),
+            describe(proposed, today, base, boxes, regions, label_names))
+
+
+def check_ward_number_measurement(box_sizes, wards):
+    measured_numbers = [item["text"] for item in box_sizes["ward_numbers"]]
+    assert measured_numbers == [str(int(ward)) for ward in wards], "ward number order differs from the measurement"
+
+
 def run_wards_tab(wards, ward_polygons_points, ward_anchors, meters_per_point, results):
     box_sizes = json.loads(WARDS_TAB_BOX_SIZES_FILE.read_text())
     ward_regions = allowed_regions(ward_polygons_points)
     ward_names = [f"ward number {int(ward)}" for ward in wards]
-    measured_numbers = [item["text"] for item in box_sizes["ward_numbers"]]
-    assert measured_numbers == [str(int(ward)) for ward in wards], "ward number order differs from the measurement"
-    # Each layer: features in the export's order (raw file order, PLOT_CRS), label = LAYER_STYLE label column.
-    layers = {}
-    for layer_name in WARDS_TAB_LABELED_LAYERS:
-        frame = gpd.read_file(ward_maps.LAYERS_DIR / f"{layer_name}.geojson").to_crs(ward_maps.PLOT_CRS).reset_index(drop=True)
-        texts = frame[map_layers.LAYER_STYLE[layer_name]["label_column"]].astype(str).tolist()
-        measured = box_sizes["layers"][layer_name]
-        assert texts == [item["text"] for item in measured], f"{layer_name}: label order/text differs from the measurement"
-        anchors = anchors_in_points(frame.geometry, meters_per_point)
-        polygons = allowed_regions(to_points(frame.geometry, meters_per_point), LAYER_LABEL_EDGE_OUTSIDE_POINTS)
-        regions, insets = inset_regions(polygons, anchors)
-        smaller = [f"{text} {inset:.1f}" for text, inset in zip(texts, insets) if inset < LAYER_LABEL_EDGE_INSET_POINTS]
-        print(f"{layer_name}: {len(smaller)} shapes get a smaller edge inset than {LAYER_LABEL_EDGE_INSET_POINTS} pt: {smaller}")
-        layers[layer_name] = {"texts": texts, "anchors": anchors, "regions": regions,
-                              "boxes_scale_1": [item[BOX_KIND] for item in measured]}
+    check_ward_number_measurement(box_sizes, wards)
+    layers = {layer_name: load_wards_tab_layer(layer_name, box_sizes, meters_per_point)
+              for layer_name in WARDS_TAB_LABELED_LAYERS}
+    # The layers solved with the ward numbers ('fixed_first' / 'joint'); WARDS_TAB_LAYERS_SOLVED_ALONE come after.
+    layers_together = {name: layer for name, layer in layers.items() if name not in WARDS_TAB_LAYERS_SOLVED_ALONE}
 
     offsets_by_scale = {}
     for label_scale in WARDS_TAB_SCALES_TO_TRY:
@@ -453,17 +501,12 @@ def run_wards_tab(wards, ward_polygons_points, ward_anchors, meters_per_point, r
                 # Ward numbers among themselves, then fixed.
                 number_offsets = solve(number_start, ward_anchors, number_boxes, ward_regions)
                 layer_offsets = {}
-                for name, layer in layers.items():
-                    count = len(layer["texts"])
-                    offsets = solve(np.concatenate([np.zeros((count, 2)), number_offsets]),
-                                    np.concatenate([layer["anchors"], ward_anchors]),
-                                    np.concatenate([layer_boxes[name], number_boxes]),
-                                    layer["regions"] + ward_regions,
-                                    movable=np.array([True] * count + [False] * len(wards)))
-                    layer_offsets[name] = offsets[:count]
+                for name, layer in layers_together.items():
+                    layer_offsets[name] = solve_layer_against_numbers(layer, layer_boxes[name], number_offsets,
+                                                                      ward_anchors, number_boxes, ward_regions)
             else:
                 # Everything at once; map_group keeps each layer's labels apart from other layers'.
-                names_in_order = list(layers)
+                names_in_order = list(layers_together)
                 counts = [len(layers[name]["texts"]) for name in names_in_order]
                 offsets = solve(np.zeros((sum(counts) + len(wards), 2)),
                                 np.concatenate([layers[name]["anchors"] for name in names_in_order] + [ward_anchors]),
@@ -474,27 +517,60 @@ def run_wards_tab(wards, ward_polygons_points, ward_anchors, meters_per_point, r
                 splits = np.cumsum(counts)
                 layer_offsets = dict(zip(names_in_order, np.split(offsets[:splits[-1]], splits[:-1])))
                 number_offsets = offsets[splits[-1]:]
+            # Layers solved alone, against this option's ward numbers.
+            for name in WARDS_TAB_LAYERS_SOLVED_ALONE:
+                layer_offsets[name] = solve_layer_against_numbers(layers[name], layer_boxes[name], number_offsets,
+                                                                  ward_anchors, number_boxes, ward_regions)
             # Report per map: ward numbers alone (unlabeled layers, street map), then each labeled layer.
             before = describe(number_start, number_start, ward_anchors, number_boxes, ward_regions, ward_names)
             after = describe(number_offsets, number_start, ward_anchors, number_boxes, ward_regions, ward_names)
             option_results["ward_numbers"] = {"today": before, "proposed": after}
             print_line(f"Wards {label_scale} {option} ward numbers", before, after)
             for name, layer in layers.items():
-                count = len(layer["texts"])
-                base = np.concatenate([layer["anchors"], ward_anchors])
-                boxes = np.concatenate([layer_boxes[name], number_boxes])
-                regions = layer["regions"] + ward_regions
-                label_names = layer["texts"] + ward_names
-                today = np.zeros((count + len(wards), 2))
-                proposed = np.concatenate([layer_offsets[name], number_offsets])
-                before = describe(today, today, base, boxes, regions, label_names)
-                after = describe(proposed, today, base, boxes, regions, label_names)
+                before, after = describe_layer_map(layer, layer_offsets[name], layer_boxes[name], number_offsets,
+                                                   ward_anchors, number_boxes, ward_regions, ward_names)
                 option_results[name] = {"today": before, "proposed": after}
                 print_line(f"Wards {label_scale} {option} {name}", before, after)
             offsets_by_scale.setdefault(scale_key, {})[option] = {
                 "ward_numbers": {ward: [int(number_offsets[i][0]), int(number_offsets[i][1])] for i, ward in enumerate(wards)},
                 "layers": {name: [[int(right), int(up)] for right, up in layer_offsets[name]] for name in layers}}
     return offsets_by_scale
+
+
+def run_added_layers_only(wards, ward_polygons_points, ward_anchors, meters_per_point):
+    """WARDS_TAB_LAYERS_SOLVED_ALONE only, against the ward numbers already in OFFSETS_FILE (every scale
+    and option there). Writes those layers' nudges into OFFSETS_FILE and nothing else in it changes."""
+    box_sizes = json.loads(WARDS_TAB_BOX_SIZES_FILE.read_text())
+    ward_regions = allowed_regions(ward_polygons_points)
+    ward_names = [f"ward number {int(ward)}" for ward in wards]
+    check_ward_number_measurement(box_sizes, wards)
+    offsets_file = json.loads(OFFSETS_FILE.read_text())
+    results = {}
+    for layer_name in WARDS_TAB_LAYERS_SOLVED_ALONE:
+        layer = load_wards_tab_layer(layer_name, box_sizes, meters_per_point)
+        for scale_key, by_option in offsets_file["wards_tab"].items():
+            label_scale = float(scale_key)
+            number_boxes = np.array([[scaled_box(item[BOX_KIND], label_scale)] for item in box_sizes["ward_numbers"]])
+            layer_boxes = np.array([[scaled_box(box, label_scale)] for box in layer["boxes_scale_1"]])
+            for option, stored in by_option.items():
+                number_offsets = np.array([stored["ward_numbers"][ward] for ward in wards], dtype=float)
+                layer_offsets = solve_layer_against_numbers(layer, layer_boxes, number_offsets,
+                                                            ward_anchors, number_boxes, ward_regions)
+                before, after = describe_layer_map(layer, layer_offsets, layer_boxes, number_offsets,
+                                                   ward_anchors, number_boxes, ward_regions, ward_names)
+                # "before" here = layer labels AND ward numbers at their plain points; the ward numbers
+                # in "after" are the stored ones (held fixed).
+                results.setdefault(scale_key, {}).setdefault(option, {})[layer_name] = {"today": before, "proposed": after}
+                print_line(f"Wards {scale_key} {option} {layer_name} (alone)", before, after)
+                stored["layers"][layer_name] = [[int(right), int(up)] for right, up in layer_offsets]
+    offsets_file["added_layers"] = {
+        "about": ("Layers solved alone with --added-layers-only (WARDS_TAB_LAYERS_SOLVED_ALONE), against the "
+                  "ward numbers already in this file; settings as in 'settings' above unless listed here."),
+        "layers": WARDS_TAB_LAYERS_SOLVED_ALONE}
+    ADDED_LAYERS_OUTPUT_FILE.write_text(json.dumps(results, indent=1))
+    OFFSETS_FILE.write_text(json.dumps(offsets_file, indent=0))
+    print(f"\nwrote {ADDED_LAYERS_OUTPUT_FILE.relative_to(REPO_DIR)} and {OFFSETS_FILE.relative_to(REPO_DIR)} "
+          f"({', '.join(WARDS_TAB_LAYERS_SOLVED_ALONE)} only)")
 
 
 def main():
@@ -509,6 +585,9 @@ def main():
     settings = {name: value for name, value in globals().items()
                 if name.isupper() and isinstance(value, (int, float, str, list, bool))
                 and not name.endswith(("_DIR", "_FILE"))}
+    if "--added-layers-only" in sys.argv[1:]:
+        run_added_layers_only(wards, ward_polygons_points, ward_anchors, meters_per_point)
+        return
     results = {"settings": settings}
     alders_offsets = run_alders(wards, ward_polygons_points, ward_anchors, results)
     print()

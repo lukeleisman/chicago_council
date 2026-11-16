@@ -54,6 +54,19 @@ blocks the law doesn't list (ward 41 is 99% in 1A in C); 10A +2.1, 6B +0.7, 10B 
   Note: Wards-tab Map View label positions are "optimized" (export asserts a nudge per feature), so a new
   labeled layer needs `measure_label_boxes.js` + `optimize_map_labels.py`, or a per-layer plain-position option.
 
+### Done (2026-11-16)
+User's choices: summary minimum **0.01** of the ward (as the other polygon layers); label **"1A"**
+(`map_layers.LABEL_PREFIX_REMOVED` takes "District " off `LONGNAME`; `map_layers.label_texts` is used by the
+export, the overlaps and the optimizer); **no board member names** (they may be out of date after the
+2026-11-03 election; no as-of date in the data). Map View labels: new optimizer setting
+`WARDS_TAB_LAYERS_SOLVED_ALONE` / `--added-layers-only` solves this layer's 20 labels against the ward numbers
+already in `map_label_offsets_optimized.json`, held fixed, so nothing already on the site moved (checked: the
+rest of the file is identical). At 1.5 / joint: 8 overlapping pairs at plain points -> 0, 10 labels moved,
+largest 10 pt. Label boxes measured in Chrome 151 at scale 1.5 (ward numbers re-measured, within 0.01 pt).
+Export: `WARDS_TAB_PLAIN_POSITION_LAYERS` (empty now) let the layer be drawn before it was measured.
+Not done: `notebooks/map_layers_review.ipynb` still labels with the raw column ("District 1A").
+Still open from the choices below: color/opacity (the standard 4-color fill); 2024-elected vs appointed.
+
 ## Step 2 — add the layer (same pattern as every other layer)
 1. `scripts/fetch_layers.py`: add a row to `LAYERS` (layer_name e.g. `cps_board_districts_2024`,
    dataset id, download_method, portal page id, notes with source and date). Not a Socrata source → a new

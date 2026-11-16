@@ -5,7 +5,10 @@
 // divide by it to get scale-1 points, as scripts/wards_tab_label_box_sizes.json stores them.
 // The Alders tab file (scripts/map_label_box_sizes.json) was measured the same way, per text line
 // (two_sizes baselines: getBBox top + font ascent), and copied out by hand.
-const MEASURED_SCALE = 1.25;   // set to the page's LAYER_MAP_LABEL_SCALE
+const MEASURED_SCALE = 1.5;   // set to the page's LAYER_MAP_LABEL_SCALE (1.25 on 2026-10-05; 1.5 on 2026-11-16)
+// Layers to measure. 2026-10-05: the first four (and the ward numbers). 2026-11-16 (plans/02): only the
+// new layer; the ward numbers are measured again but only compared, not stored over the 2026-10-05 values.
+const LAYERS_TO_MEASURE = ['cps_board_subdistricts_2024'];
 const sel = document.querySelector('.cc-controls select');
 const meta = await fetch('data/meta.json').then((r) => r.json());
 const style = meta.layers.style;
@@ -34,7 +37,7 @@ function measure(text, fontPoints) {
 }
 const out = { measured_at_scale: MEASURED_SCALE, label_font_points: style.label_font_points,
               ward_number_font_points: style.ward_number_font_points, browser: navigator.userAgent, layers: {} };
-for (const layer of ['community_areas', 'neighborhoods', 'zip_codes', 'police_districts']) {
+for (const layer of LAYERS_TO_MEASURE) {
   sel.value = layer; sel.dispatchEvent(new Event('change'));
   await new Promise((resolve) => setTimeout(resolve, 800));
   out.layers[layer] = [...document.querySelectorAll('.cc-layer-label')].map((text) => measure(text, style.label_font_points));

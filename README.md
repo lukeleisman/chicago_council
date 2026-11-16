@@ -19,7 +19,7 @@ Read from `TAB_OPTIONS`, `ALDER_MEASURE_OPTIONS` and `LAYER_OPTIONS` in `docs/da
 - **Votes** tab: split council roll calls (`SPLIT_*` rules in `council_metrics.py`), each alder's vote on the one picked.
 - **Wards** tab, with a dropdown of layers drawn under the wards: Street map, Community areas,
   Neighborhoods, ZIP codes, Police districts, Parks, CTA rail lines, CTA rail stations,
-  CPS schools (2025–26), Ward offices.
+  CPS schools (2025–26), CPS board subdistricts (2024), Ward offices.
 - Every tab: **Map View** (2023 ward boundaries) or **Tile View** (one equal-size tile per ward); zoom;
   a hover card per ward and a side table (clicking a ward scrolls the table to it).
 
@@ -51,7 +51,8 @@ URLs and retrieval times alongside the files it writes.
   votes. Resumable; respects the API's rate-limit header.
 - `scripts/fetch_layers.py` — map layers from the Chicago Data Portal (wards, community areas,
   neighborhoods, census tracts, precincts, ZIP codes, police districts, parks, CTA, schools,
-  ward offices). Dataset IDs are listed in the script.
+  ward offices), plus the CPS board subdistricts from a Chicago Tribune ArcGIS item. Dataset IDs are
+  listed in the script.
 - `scripts/fetch_photos.py` — current alders' photos from the eLMS profile-picture URLs in
   `data/tables/people.csv` (run `build_tables.py` first), saved to `data/raw/photos/`.
 - DataMade's nightly Chicago council SQLite export
